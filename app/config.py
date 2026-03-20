@@ -43,6 +43,10 @@ class Settings(BaseModel):
         default="mixed",
         alias="TELEGRAM_OUTBOUND_MODE",
     )
+    telegram_response_mode: Literal["normalized", "transparent"] = Field(
+        default="normalized",
+        alias="TELEGRAM_RESPONSE_MODE",
+    )
     telegram_photo_max_bytes: int | None = Field(
         default=None,
         alias="TELEGRAM_PHOTO_MAX_BYTES",
@@ -101,6 +105,7 @@ class Settings(BaseModel):
             signature_ttl_seconds=self.signature_ttl_seconds,
             telegram_timeout_seconds=self.telegram_timeout_seconds,
             telegram_outbound_mode=self.telegram_outbound_mode,
+            telegram_response_mode=self.telegram_response_mode,
             telegram_photo_max_bytes=self.telegram_photo_max_bytes,
             backend_timeout_seconds=self.backend_timeout_seconds,
             telegram_bot_token_configured=True,
@@ -118,6 +123,7 @@ class HealthConfigSummary(BaseModel):
     signature_ttl_seconds: int
     telegram_timeout_seconds: float
     telegram_outbound_mode: Literal["typed", "mixed", "proxy"]
+    telegram_response_mode: Literal["normalized", "transparent"]
     telegram_photo_max_bytes: int | None
     backend_timeout_seconds: float
     telegram_bot_token_configured: bool

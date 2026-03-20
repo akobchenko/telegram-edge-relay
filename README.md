@@ -120,6 +120,7 @@ The service fails fast on missing or invalid required values.
 | `SIGNATURE_TTL_SECONDS` | yes | Allowed timestamp skew/window for signed internal requests |
 | `TELEGRAM_TIMEOUT_SECONDS` | yes | Timeout for outbound Telegram requests |
 | `TELEGRAM_OUTBOUND_MODE` | no | Outbound mode: `typed`, `mixed`, or `proxy`; defaults to `mixed` |
+| `TELEGRAM_RESPONSE_MODE` | no | Internal outbound response mode: `normalized` or `transparent`; defaults to `normalized` |
 | `TELEGRAM_PHOTO_MAX_BYTES` | no | Optional max upload size for internal `sendPhoto` |
 | `BACKEND_TIMEOUT_SECONDS` | yes | Timeout for forwarding webhook updates to the backend |
 | `DEBUG` | yes | Enables plain-text logs when `true`; keep `false` in production |
@@ -250,11 +251,20 @@ signature = HMAC_SHA256(secret, f"{timestamp}.{raw_http_body_bytes}")
 All internal outbound endpoints:
 
 - require HMAC auth
-- return a normalized envelope
-- return `{"ok": true, "result": ...}` on success
-- return `{"ok": false, ...}` on failure
 - return `401` for auth failures
 - return `422` for request validation failures
+
+Response modes:
+
+- `normalized`: relay returns its current internal envelope on failures and `{"ok": true, "result": ...}` on success
+- `transparent`: relay stays operationally observable, but successful and Telegram-originated error responses are returned as close as possible to native Telegram Bot API responses
+
+In `transparent` mode:
+
+- success responses are `{"ok": true, "result": ...}`
+- Telegram JSON errors are returned with the same HTTP status and original Telegram JSON body
+- upstream non-JSON errors still return deterministic JSON, including `raw_response_text`
+- relay-local failures such as auth, validation, timeout, or transport errors still return deterministic JSON because there is no native Telegram response to mirror
 
 Outbound modes:
 

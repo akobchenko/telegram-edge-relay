@@ -63,6 +63,89 @@ def build_internal_error_response(
     return JSONResponse(status_code=status_code, content=error_response.model_dump())
 
 
+def _response_mode() -> str:
+    return get_settings().telegram_response_mode
+
+
+def _build_transparent_error_response(
+    *,
+    status_code: int,
+    description: str,
+    error_code: int | None = None,
+    response_data: dict[str, Any] | None = None,
+    response_text: str | None = None,
+    error_type: str,
+) -> JSONResponse:
+    if response_data is not None:
+        return JSONResponse(status_code=status_code, content=response_data)
+
+    payload: dict[str, Any] = {
+        "ok": False,
+        "description": description,
+        "error_type": error_type,
+    }
+    if error_code is not None:
+        payload["error_code"] = error_code
+    if response_text is not None:
+        payload["raw_response_text"] = response_text
+    return JSONResponse(status_code=status_code, content=payload)
+
+
+def _build_transport_error_response(
+    *,
+    error_type: str,
+    message: str,
+    status_code: int,
+    response_text: str | None = None,
+) -> JSONResponse:
+    if _response_mode() == "transparent":
+        return _build_transparent_error_response(
+            status_code=status_code,
+            description=message,
+            error_code=status_code,
+            response_text=response_text,
+            error_type=error_type,
+        )
+    return build_internal_error_response(
+        error_type=error_type,
+        message=message,
+        status_code=status_code,
+        telegram_response_text=response_text,
+    )
+
+
+def _build_upstream_error_response(
+    *,
+    error_type: str,
+    message: str,
+    status_code: int,
+    telegram_status_code: int | None = None,
+    telegram_error_code: int | None = None,
+    telegram_description: str | None = None,
+    telegram_response: dict[str, Any] | None = None,
+    telegram_response_text: str | None = None,
+) -> JSONResponse:
+    if _response_mode() == "transparent":
+        return _build_transparent_error_response(
+            status_code=status_code,
+            description=telegram_description or message,
+            error_code=telegram_error_code,
+            response_data=telegram_response,
+            response_text=telegram_response_text,
+            error_type=error_type,
+        )
+    return build_internal_error_response(
+        error_type=error_type,
+        message=message,
+        status_code=status_code,
+        telegram_status_code=telegram_status_code,
+        telegram_error_code=telegram_error_code,
+        telegram_description=telegram_description,
+        telegram_response=telegram_response,
+        telegram_response_text=telegram_response_text,
+    )
+
+
 def _telegram_error_response(
     exc: TelegramApiError | TelegramHttpError | TelegramTransportError,
 ) -> JSONResponse:
@@ -77,7 +160,7 @@ def _telegram_error_response(
                 "error_code": exc.error_code,
             },
         )
-        return build_internal_error_response(
+        return _build_upstream_error_response(
             error_type="telegram_http_error",
             message="telegram returned a non-2xx response",
             status_code=exc.upstream_status_code,
@@ -98,10 +181,10 @@ def _telegram_error_response(
                 "error_code": exc.error_code,
             },
         )
-        return build_internal_error_response(
+        return _build_upstream_error_response(
             error_type="telegram_api_error",
             message="telegram returned an application error",
-            status_code=502,
+            status_code=200,
             telegram_error_code=exc.error_code,
             telegram_description=exc.description,
             telegram_response=exc.response_data,
@@ -117,17 +200,17 @@ def _telegram_error_response(
         },
     )
     if exc.error_type == "timeout":
-        return build_internal_error_response(
+        return _build_transport_error_response(
             error_type="relay_timeout",
             message=exc.description,
             status_code=504,
-            telegram_response_text=exc.response_text,
+            response_text=exc.response_text,
         )
-    return build_internal_error_response(
+    return _build_transport_error_response(
         error_type="relay_network_error",
         message=exc.description,
         status_code=503 if exc.error_type == "misconfigured" else 502,
-        telegram_response_text=exc.response_text,
+        response_text=exc.response_text,
     )
 
 
