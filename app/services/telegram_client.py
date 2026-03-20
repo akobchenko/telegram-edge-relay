@@ -366,19 +366,6 @@ class TelegramClient:
             response_text=response_text,
         )
 
-    @staticmethod
-    def serialize_form_fields(payload: dict[str, Any]) -> TelegramFormFields:
-        fields: TelegramFormFields = []
-        for key, value in payload.items():
-            if isinstance(value, (dict, list)):
-                normalized = json.dumps(value, separators=(",", ":"))
-            elif isinstance(value, bool):
-                normalized = str(value).lower()
-            else:
-                normalized = str(value)
-            fields.append((key, normalized))
-        return fields
-
 def get_telegram_client(request: Request) -> TelegramClient:
     return cast(TelegramClient, request.app.state.telegram_client)
 

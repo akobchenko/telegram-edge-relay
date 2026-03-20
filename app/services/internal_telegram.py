@@ -36,6 +36,33 @@ class MultipartForwardError(Exception):
         super().__init__(detail)
 
 
+def _first_form_field_value(form_fields: TelegramFormFields, key: str) -> str | None:
+    for field_name, field_value in form_fields:
+        if field_name == key:
+            return field_value
+    return None
+
+
+async def _forward_canonical_request(
+    *,
+    method_name: str,
+    route: str,
+    telegram_client: TelegramClient,
+    json_payload: dict[str, Any] | None = None,
+    form_fields: TelegramFormFields | None = None,
+    files: TelegramMultipartFiles | None = None,
+) -> TelegramMethodSuccessResponse | JSONResponse:
+    return await run_telegram_call(
+        telegram_client.forward_method(
+            method_name=method_name,
+            route=route,
+            json_payload=json_payload,
+            form_fields=form_fields,
+            files=files,
+        )
+    )
+
+
 def build_internal_error_response(
     *,
     error_type: str,
@@ -319,12 +346,11 @@ async def forward_typed_json_method(
     payload: dict[str, Any],
     telegram_client: TelegramClient,
 ) -> TelegramMethodSuccessResponse | JSONResponse:
-    return await run_telegram_call(
-        telegram_client.forward_method(
-            method_name=method_name,
-            route=f"/internal/telegram/{method_name}",
-            json_payload=payload,
-        )
+    return await _forward_canonical_request(
+        method_name=method_name,
+        route=f"/internal/telegram/{method_name}",
+        telegram_client=telegram_client,
+        json_payload=payload,
     )
 
 
@@ -363,12 +389,11 @@ async def forward_raw_request(
                 message="request body must be a JSON object",
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
-        return await run_telegram_call(
-            telegram_client.forward_method(
-                method_name=method_name,
-                route=route,
-                json_payload=payload,
-            )
+        return await _forward_canonical_request(
+            method_name=method_name,
+            route=route,
+            telegram_client=telegram_client,
+            json_payload=payload,
         )
 
     if content_type in {"application/x-www-form-urlencoded", "multipart/form-data"}:
@@ -390,13 +415,12 @@ async def forward_raw_request(
                 message=exc.detail,
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
-        return await run_telegram_call(
-            telegram_client.forward_method(
-                method_name=method_name,
-                route=route,
-                form_fields=form_fields,
-                files=files or None,
-            )
+        return await _forward_canonical_request(
+            method_name=method_name,
+            route=route,
+            telegram_client=telegram_client,
+            form_fields=form_fields,
+            files=files or None,
         )
 
     return build_internal_error_response(
@@ -413,16 +437,15 @@ async def forward_send_photo(
 ) -> TelegramMethodSuccessResponse | JSONResponse:
     try:
         form = await parse_form_data(request)
+        form_fields, files = build_multipart_forward_payload(form)
     except MultipartForwardError as exc:
         return build_internal_error_response(
             error_type="validation_error",
             message=exc.detail,
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
-    photo = form.get("photo")
-    if not isinstance(photo, UploadFile) and not (
-        hasattr(photo, "read") and hasattr(photo, "filename")
-    ):
+    photo_files = [file_payload for field_name, file_payload in files if field_name == "photo"]
+    if not photo_files:
         raise RequestValidationError(
             [
                 {
@@ -433,16 +456,11 @@ async def forward_send_photo(
                 }
             ]
         )
+    _, photo_bytes, _ = photo_files[0]
 
-    reply_markup_raw = form.get("reply_markup")
+    reply_markup_raw = _first_form_field_value(form_fields, "reply_markup")
     reply_markup = None
     if reply_markup_raw not in (None, ""):
-        if not isinstance(reply_markup_raw, str):
-            return build_internal_error_response(
-                error_type="validation_error",
-                message="reply_markup must be valid JSON",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            )
         try:
             reply_markup = json.loads(reply_markup_raw)
         except json.JSONDecodeError:
@@ -459,25 +477,29 @@ async def forward_send_photo(
             )
 
     try:
-        payload = TelegramSendPhotoRequest(
-            chat_id=form.get("chat_id"),
-            caption=form.get("caption"),
-            parse_mode=form.get("parse_mode"),
-            disable_notification=form.get("disable_notification"),
-            protect_content=form.get("protect_content"),
-            message_thread_id=form.get("message_thread_id"),
-            reply_to_message_id=form.get("reply_to_message_id"),
-            allow_sending_without_reply=form.get("allow_sending_without_reply"),
+        TelegramSendPhotoRequest(
+            chat_id=_first_form_field_value(form_fields, "chat_id"),
+            caption=_first_form_field_value(form_fields, "caption"),
+            parse_mode=_first_form_field_value(form_fields, "parse_mode"),
+            disable_notification=_first_form_field_value(
+                form_fields, "disable_notification"
+            ),
+            protect_content=_first_form_field_value(form_fields, "protect_content"),
+            message_thread_id=_first_form_field_value(
+                form_fields, "message_thread_id"
+            ),
+            reply_to_message_id=_first_form_field_value(
+                form_fields, "reply_to_message_id"
+            ),
+            allow_sending_without_reply=_first_form_field_value(
+                form_fields, "allow_sending_without_reply"
+            ),
             reply_markup=reply_markup,
         )
     except ValidationError as exc:
         raise RequestValidationError(exc.errors()) from exc
 
-    file_object = photo.file
-    current_position = file_object.tell()
-    file_object.seek(0, 2)
-    photo_size = file_object.tell()
-    file_object.seek(current_position)
+    photo_size = len(photo_bytes)
     if photo_size <= 0:
         return build_internal_error_response(
             error_type="validation_error",
@@ -496,24 +518,12 @@ async def forward_send_photo(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
         )
 
-    return await run_telegram_call(
-        telegram_client.forward_method(
-            method_name="sendPhoto",
-            route="/internal/telegram/sendPhoto",
-            form_fields=telegram_client.serialize_form_fields(
-                payload.model_dump(exclude_none=True)
-            ),
-            files=[
-                (
-                    "photo",
-                    (
-                        photo.filename or "photo",
-                        _read_upload_file_bytes(photo),
-                        photo.content_type or "application/octet-stream",
-                    ),
-                )
-            ],
-        )
+    return await _forward_canonical_request(
+        method_name="sendPhoto",
+        route="/internal/telegram/sendPhoto",
+        telegram_client=telegram_client,
+        form_fields=form_fields,
+        files=files,
     )
 
 

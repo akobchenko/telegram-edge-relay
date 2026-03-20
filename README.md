@@ -272,7 +272,13 @@ Outbound modes:
 - `mixed`: default and recommended mode; typed endpoints remain primary, and `/internal/telegram/raw/{method}` is available as a trusted internal escape hatch
 - `proxy`: typed endpoints remain available for compatibility, but both typed and raw requests use the same generic Telegram forwarding engine for JSON, form-urlencoded, and multipart requests
 
-Typed endpoints remain the preferred interface.
+Transport semantics:
+
+- the generic/raw forwarding path is the canonical Telegram transport layer for JSON, form-urlencoded, and multipart requests
+- typed endpoints are thin compatibility and safety wrappers over that same transport
+- when the same Telegram method is available through both typed and raw paths, the relay aims to produce equivalent outbound Telegram requests
+
+Typed endpoints remain the preferred interface for steady-state integrations that benefit from early validation.
 Raw/proxy mode is intended only for trusted internal/private use.
 
 Normalized internal error categories:
@@ -476,10 +482,17 @@ Recommended backend behavior:
 - verify `X-Relay-Timestamp` and `X-Relay-Signature` on inbound forwarded updates
 - treat the relay as a transport adapter, not as an application backend
 - prefer the typed internal endpoints for your steady-state contract
-- use `/internal/telegram/raw/{method}` only for rare or not-yet-covered Bot API methods
+- use `/internal/telegram/raw/{method}` as the canonical escape hatch for methods or payload shapes not covered by typed wrappers
 - reuse the same request-signing code for both directions
 
-The relay preserves a normalized internal success/error envelope, but it also includes original Telegram details such as upstream status, `error_code`, `description`, parsed JSON response, and raw response text when available so backend clients can keep Telegram-like recovery logic without brittle string parsing.
+When `TELEGRAM_RESPONSE_MODE=transparent`, backend response handling can stay close to direct Telegram Bot API handling. The relay still preserves structured logs and internal classification, but successful and Telegram-originated error responses are returned in Telegram-style JSON whenever possible.
+
+Remaining intentional drift from native Telegram API:
+
+- internal endpoints still require relay HMAC auth and timestamp checks
+- relay-local failures such as auth, validation, timeout, or transport errors still return deterministic relay JSON
+- typed endpoints still validate a small set of stable fields before forwarding
+- typed multipart wrappers may reject malformed inputs earlier than Telegram itself when that improves operational safety
 
 ## Python Examples
 
