@@ -181,24 +181,12 @@ def build_multipart_forward_payload(
             and hasattr(value, "filename")
             and hasattr(value, "content_type")
         ):
-            file_object = getattr(value, "file", None)
-            if file_object is None or not hasattr(file_object, "read"):
-                raise MultipartForwardError("uploaded file is invalid")
-            try:
-                current_position = file_object.tell()
-                file_object.seek(0)
-                file_bytes = file_object.read()
-                file_object.seek(current_position)
-            except Exception as exc:
-                raise MultipartForwardError("uploaded file could not be read") from exc
-            if not isinstance(file_bytes, bytes):
-                raise MultipartForwardError("uploaded file could not be read")
             files.append(
                 (
                     key,
                     (
                         value.filename or key,
-                        file_bytes,
+                        _read_upload_file_bytes(value),
                         value.content_type or "application/octet-stream",
                     ),
                 )
@@ -206,6 +194,22 @@ def build_multipart_forward_payload(
         else:
             fields.append((key, value if isinstance(value, str) else str(value)))
     return fields, files
+
+
+def _read_upload_file_bytes(upload: Any) -> bytes:
+    file_object = getattr(upload, "file", None)
+    if file_object is None or not hasattr(file_object, "read"):
+        raise MultipartForwardError("uploaded file is invalid")
+    try:
+        current_position = file_object.tell()
+        file_object.seek(0)
+        file_bytes = file_object.read()
+        file_object.seek(current_position)
+    except Exception as exc:
+        raise MultipartForwardError("uploaded file could not be read") from exc
+    if not isinstance(file_bytes, bytes):
+        raise MultipartForwardError("uploaded file could not be read")
+    return file_bytes
 
 
 async def parse_form_data(request: Request) -> Any:
@@ -421,7 +425,7 @@ async def forward_send_photo(
                     "photo",
                     (
                         photo.filename or "photo",
-                        photo.file,
+                        _read_upload_file_bytes(photo),
                         photo.content_type or "application/octet-stream",
                     ),
                 )

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import json
 import time
 import uuid
-from typing import IO, Any, Literal, cast
+from typing import Any, Literal, cast
 
 import httpx
 from fastapi import Request
@@ -39,7 +39,7 @@ class TelegramTransportError(Exception):
 
 TelegramOutboundMode = Literal["typed", "mixed", "proxy"]
 TelegramFormFields = list[tuple[str, str]]
-TelegramMultipartFiles = list[tuple[str, tuple[str, IO[bytes] | bytes, str]]]
+TelegramMultipartFiles = list[tuple[str, tuple[str, bytes, str]]]
 
 
 class TelegramClient:
