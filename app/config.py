@@ -15,11 +15,18 @@ from pydantic import (
 )
 
 
+def _default_version() -> str:
+    try:
+        return version("telegram-edge-relay")
+    except PackageNotFoundError:
+        return "0.1.0"
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(frozen=True, populate_by_name=True)
 
-    app_name: str = Field(default="telegram-edge-relay")
-    app_version: str = Field(default="0.1.0")
+    app_name: str = Field(default="telegram-edge-relay", alias="APP_NAME")
+    app_version: str = Field(default_factory=_default_version, alias="APP_VERSION")
     app_host: str = Field(alias="APP_HOST", min_length=1)
     app_port: int = Field(alias="APP_PORT", ge=1, le=65535)
     log_level: str = Field(alias="LOG_LEVEL")
@@ -111,18 +118,9 @@ class HealthConfigSummary(BaseModel):
     internal_shared_secret_configured: bool
 
 
-def _default_version() -> str:
-    try:
-        return version("telegram-edge-relay")
-    except PackageNotFoundError:
-        return "0.1.0"
-
-
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     raw_values = dict(os.environ)
-    raw_values.setdefault("APP_NAME", "telegram-edge-relay")
-    raw_values.setdefault("APP_VERSION", _default_version())
     try:
         settings = Settings.model_validate(raw_values)
     except ValidationError as exc:

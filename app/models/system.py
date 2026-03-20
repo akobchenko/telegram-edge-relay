@@ -10,6 +10,7 @@ from app.config import HealthConfigSummary
 class HealthResponse(BaseModel):
     status: Literal["ok"]
     service: str
+    version: str
     config: HealthConfigSummary
 
 

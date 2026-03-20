@@ -13,6 +13,7 @@ from app.logging import get_logger
 INTERNAL_TIMESTAMP_HEADER = "X-Relay-Timestamp"
 INTERNAL_SIGNATURE_HEADER = "X-Relay-Signature"
 SIGNATURE_PREFIX = "sha256="
+_SIGNATURE_HEX_CHARS = frozenset("0123456789abcdef")
 _HTTP_ERROR_DETAILS = {
     "missing signature headers": "missing internal auth headers",
     "invalid signature timestamp": "invalid internal timestamp",
@@ -73,6 +74,10 @@ def verify_signature(
     if not signature.startswith(SIGNATURE_PREFIX) or len(signature) != len(SIGNATURE_PREFIX) + 64:
         raise SignatureVerificationError("invalid signature format")
 
+    signature_hex = signature[len(SIGNATURE_PREFIX) :]
+    if any(char not in _SIGNATURE_HEX_CHARS for char in signature_hex):
+        raise SignatureVerificationError("invalid signature format")
+
     expected_signature = sign_payload(secret=secret, body=body, timestamp=timestamp)
     if not hmac.compare_digest(expected_signature, signature):
         raise SignatureVerificationError("invalid signature")
@@ -119,6 +124,9 @@ async def require_internal_signature(request: Request) -> None:
             extra={
                 "direction": "telegram_outbound",
                 "route": request.url.path,
+                "target": "relay",
+                "elapsed_ms": None,
+                "status": 401,
                 "outcome": "auth_failed",
             },
         )

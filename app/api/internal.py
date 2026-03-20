@@ -147,7 +147,7 @@ async def _run_telegram_call(
     "/sendMessage",
     response_model=TelegramMethodSuccessResponse,
     responses={
-        400: {"model": TelegramMethodErrorResponse},
+        422: {"model": TelegramMethodErrorResponse},
         401: {"model": TelegramMethodErrorResponse},
         502: {"model": TelegramMethodErrorResponse},
         503: {"model": TelegramMethodErrorResponse},
@@ -168,7 +168,7 @@ async def send_message(
     "/sendPhoto",
     response_model=TelegramMethodSuccessResponse,
     responses={
-        400: {"model": TelegramMethodErrorResponse},
+        422: {"model": TelegramMethodErrorResponse},
         401: {"model": TelegramMethodErrorResponse},
         413: {"model": TelegramMethodErrorResponse},
         502: {"model": TelegramMethodErrorResponse},
@@ -235,7 +235,7 @@ async def send_photo(
     "/editMessageText",
     response_model=TelegramMethodSuccessResponse,
     responses={
-        400: {"model": TelegramMethodErrorResponse},
+        422: {"model": TelegramMethodErrorResponse},
         401: {"model": TelegramMethodErrorResponse},
         502: {"model": TelegramMethodErrorResponse},
         503: {"model": TelegramMethodErrorResponse},
@@ -256,7 +256,7 @@ async def edit_message_text(
     "/editMessageCaption",
     response_model=TelegramMethodSuccessResponse,
     responses={
-        400: {"model": TelegramMethodErrorResponse},
+        422: {"model": TelegramMethodErrorResponse},
         401: {"model": TelegramMethodErrorResponse},
         502: {"model": TelegramMethodErrorResponse},
         503: {"model": TelegramMethodErrorResponse},
@@ -277,7 +277,7 @@ async def edit_message_caption(
     "/answerCallbackQuery",
     response_model=TelegramMethodSuccessResponse,
     responses={
-        400: {"model": TelegramMethodErrorResponse},
+        422: {"model": TelegramMethodErrorResponse},
         401: {"model": TelegramMethodErrorResponse},
         502: {"model": TelegramMethodErrorResponse},
         503: {"model": TelegramMethodErrorResponse},
@@ -298,7 +298,7 @@ async def answer_callback_query(
     "/deleteMessage",
     response_model=TelegramMethodSuccessResponse,
     responses={
-        400: {"model": TelegramMethodErrorResponse},
+        422: {"model": TelegramMethodErrorResponse},
         401: {"model": TelegramMethodErrorResponse},
         502: {"model": TelegramMethodErrorResponse},
         503: {"model": TelegramMethodErrorResponse},
@@ -319,7 +319,7 @@ async def delete_message(
     "/sendChatAction",
     response_model=TelegramMethodSuccessResponse,
     responses={
-        400: {"model": TelegramMethodErrorResponse},
+        422: {"model": TelegramMethodErrorResponse},
         401: {"model": TelegramMethodErrorResponse},
         502: {"model": TelegramMethodErrorResponse},
         503: {"model": TelegramMethodErrorResponse},

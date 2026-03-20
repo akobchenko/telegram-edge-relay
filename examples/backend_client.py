@@ -20,7 +20,6 @@ import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
-
 import httpx
 
 RELAY_TIMESTAMP_HEADER = "X-Relay-Timestamp"
@@ -40,6 +39,19 @@ class RelayClientConfig:
     timeout_seconds: float = 10.0
 
 
+@dataclass(frozen=True)
+class SendMessageRequest:
+    chat_id: int | str
+    text: str
+
+
+@dataclass(frozen=True)
+class SendPhotoRequest:
+    chat_id: int | str
+    photo_path: str
+    caption: str | None = None
+
+
 class RelayClient:
     def __init__(self, config: RelayClientConfig) -> None:
         self._config = config
@@ -51,8 +63,14 @@ class RelayClient:
     def close(self) -> None:
         self._http_client.close()
 
-    def send_message(self, *, chat_id: int | str, text: str) -> httpx.Response:
-        body = json.dumps({"chat_id": chat_id, "text": text}).encode("utf-8")
+    def send_message(self, payload: SendMessageRequest) -> httpx.Response:
+        body = json.dumps(
+            {
+                "chat_id": payload.chat_id,
+                "text": payload.text,
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
         headers = self._build_signed_headers(body, content_type="application/json")
         return self._http_client.post(
             "/internal/telegram/sendMessage",
@@ -62,13 +80,10 @@ class RelayClient:
 
     def send_photo(
         self,
-        *,
-        chat_id: int | str,
-        photo_path: str,
-        caption: str | None = None,
+        payload: SendPhotoRequest,
     ) -> httpx.Response:
-        photo_bytes = Path(photo_path).read_bytes()
-        filename = Path(photo_path).name
+        photo_bytes = Path(payload.photo_path).read_bytes()
+        filename = Path(payload.photo_path).name
 
         # Example-only multipart builder.
         # In production, centralize this so signing and sending always use the exact same bytes.
@@ -76,8 +91,8 @@ class RelayClient:
         body = self._encode_multipart(
             boundary=boundary,
             fields={
-                "chat_id": str(chat_id),
-                **({"caption": caption} if caption is not None else {}),
+                "chat_id": str(payload.chat_id),
+                **({"caption": payload.caption} if payload.caption is not None else {}),
             },
             file_field_name="photo",
             filename=filename,
@@ -150,13 +165,20 @@ if __name__ == "__main__":
     )
     client = RelayClient(config)
     try:
-        send_message_response = client.send_message(chat_id=123456, text="hello")
+        send_message_response = client.send_message(
+            SendMessageRequest(
+                chat_id=123456,
+                text="hello from the private backend",
+            )
+        )
         print("sendMessage:", send_message_response.status_code, send_message_response.text)
 
         send_photo_response = client.send_photo(
-            chat_id=123456,
-            photo_path="example.jpg",
-            caption="uploaded via relay",
+            SendPhotoRequest(
+                chat_id=123456,
+                photo_path="example.jpg",
+                caption="uploaded via relay",
+            )
         )
         print("sendPhoto:", send_photo_response.status_code, send_photo_response.text)
     finally:

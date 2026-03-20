@@ -14,6 +14,7 @@ async def health() -> HealthResponse:
     return HealthResponse(
         status="ok",
         service=settings.app_name,
+        version=settings.app_version,
         config=settings.safe_health_summary(),
     )
 

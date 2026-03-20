@@ -76,10 +76,18 @@ pip install -e .
 
 Create a local env file from `.env.example` and set real values.
 
-Run the server:
+The relay does not load `.env` automatically. Export the variables in your shell, inject them with your process manager, or use your container/orchestrator environment settings before startup.
+
+Start the relay with the typed config from the environment:
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8080
+python -m app.main
+```
+
+Alternative startup if you prefer invoking Uvicorn directly:
+
+```bash
+uvicorn app.main:create_app --factory --host "${APP_HOST}" --port "${APP_PORT}"
 ```
 
 Basic checks:
@@ -95,6 +103,8 @@ The service fails fast on missing or invalid required values.
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
+| `APP_NAME` | no | Service name exposed by `/health` and `/version` |
+| `APP_VERSION` | no | Version exposed by `/health` and `/version`; defaults to the package version |
 | `APP_HOST` | yes | Bind address for the relay process |
 | `APP_PORT` | yes | Bind port for the relay process |
 | `LOG_LEVEL` | yes | Standard log level such as `INFO` or `DEBUG` |
@@ -108,6 +118,19 @@ The service fails fast on missing or invalid required values.
 | `TELEGRAM_PHOTO_MAX_BYTES` | no | Optional max upload size for internal `sendPhoto` |
 | `BACKEND_TIMEOUT_SECONDS` | yes | Timeout for forwarding webhook updates to the backend |
 | `DEBUG` | yes | Enables plain-text logs when `true`; keep `false` in production |
+
+## Health and Version
+
+`GET /health` returns:
+
+- relay status
+- app name
+- app version
+- a safe config summary without secrets
+
+`GET /version` returns only the app name and version.
+
+Use `/health` for first-boot verification and `/version` for deployment identification.
 
 ## Webhook Setup
 
@@ -134,6 +157,13 @@ The relay:
 - forwards the exact raw JSON bytes to the backend
 - signs the relay-to-backend request with timestamp + HMAC
 
+Before switching production traffic, verify:
+
+- the webhook URL is publicly reachable over HTTPS
+- the deployed path secret matches `TELEGRAM_WEBHOOK_PATH_SECRET`
+- the backend endpoint at `{BACKEND_BASE_URL}{BACKEND_FORWARD_PATH}` accepts signed requests from the relay
+- the private backend can reach the relay internal API
+
 ## Reverse Proxy and TLS
 
 Run the relay behind a reverse proxy or load balancer that handles TLS.
@@ -141,10 +171,14 @@ Run the relay behind a reverse proxy or load balancer that handles TLS.
 Operational notes:
 
 - terminate TLS before traffic reaches the relay
-- restrict public exposure to the webhook and system endpoints only
-- keep internal `/internal/telegram/...` endpoints reachable only from trusted backend infrastructure
+- do not rewrite the webhook path; Telegram must reach `/telegram/webhook/{TELEGRAM_WEBHOOK_PATH_SECRET}` exactly
+- expose only `/telegram/webhook/{secret}`, `/health`, and `/version` to the public internet
+- keep internal `/internal/telegram/...` endpoints reachable only from trusted backend infrastructure, private networking, VPN, or strict IP allowlists
 - preserve `X-Request-ID` if your proxy already sets one
+- forward the request body unchanged
+- pass standard `Host` and `X-Forwarded-*` headers normally; the relay does not require special proxy middleware for v1
 - set request body limits that fit your expected Telegram webhook and internal upload sizes
+- align proxy timeouts with the relay timeouts so the proxy does not fail first
 
 Typical production placement:
 
@@ -153,6 +187,13 @@ Internet -> Nginx/Caddy/ALB -> Relay
 ```
 
 The relay itself does not manage certificates.
+
+Recommended first deployment shape:
+
+```text
+Telegram -> Public TLS proxy -> Relay -> Private backend
+Private backend -> Relay internal API -> Telegram
+```
 
 ## Internal Signing Model
 
@@ -207,6 +248,8 @@ All internal outbound endpoints:
 - return a normalized envelope
 - return `{"ok": true, "result": ...}` on success
 - return `{"ok": false, ...}` on failure
+- return `401` for auth failures
+- return `422` for request validation failures
 
 Normalized internal error categories:
 
@@ -353,6 +396,12 @@ The forwarded request:
 
 The backend should verify the same HMAC scheme before accepting the forwarded update.
 
+The relay uses the same header names in both directions:
+
+- `X-Relay-Timestamp`
+- `X-Relay-Signature`
+- `X-Request-ID` when available
+
 ## Minimal Backend Integration Notes
 
 On the private backend side, you need only two things:
@@ -375,3 +424,14 @@ Small backend integration examples live in `examples/README.md`:
 
 - `examples/backend_client.py`
 - `examples/backend_receiver.py`
+
+## Deployment Checklist
+
+1. Populate all required environment variables from [`.env.example`](/Users/antonkobcenko/Documents/projects/telegram-edge-relay/.env.example) with real secrets and endpoints.
+2. Install dependencies and start the relay with `python -m app.main` or `uvicorn app.main:create_app --factory`.
+3. Put the relay behind a public HTTPS reverse proxy and do not expose `/internal/telegram/...` publicly.
+4. Confirm `GET /health` returns `status=ok`, the expected version, and the expected non-secret config summary.
+5. Confirm the private backend endpoint at `{BACKEND_BASE_URL}{BACKEND_FORWARD_PATH}` is reachable from the relay and verifies relay signatures.
+6. Confirm the private backend can call the relay internal endpoints with valid `X-Relay-Timestamp` and `X-Relay-Signature` headers.
+7. Register the Telegram webhook URL `https://<public-host>/telegram/webhook/<TELEGRAM_WEBHOOK_PATH_SECRET>` and verify `setWebhook` succeeds.
+8. Send one real webhook and one signed internal outbound request, then verify correlated logs using `X-Request-ID`, route, direction, status, and elapsed time.

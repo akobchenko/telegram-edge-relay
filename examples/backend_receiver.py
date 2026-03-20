@@ -9,6 +9,7 @@ Production guidance:
 - keep the shared secret outside source control
 - add your application's request logging and tracing
 - verify request size limits at the proxy and app layers
+- verify the `Content-Type` and route this into your existing bot/application layer
 - route the validated update into your own bot/application logic
 """
 
@@ -16,10 +17,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import time
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, status
+from pydantic import BaseModel
 
 RELAY_TIMESTAMP_HEADER = "X-Relay-Timestamp"
 RELAY_SIGNATURE_HEADER = "X-Relay-Signature"
@@ -27,6 +30,18 @@ INTERNAL_SHARED_SECRET = "replace-me"
 SIGNATURE_TTL_SECONDS = 300
 
 app = FastAPI()
+
+
+class ForwardedTelegramUpdateAck(BaseModel):
+    ok: bool
+    request_id: str | None
+    update_id: int | None
+
+
+def build_signature(secret: str, body: bytes, timestamp: str) -> str:
+    payload = timestamp.encode("utf-8") + b"." + body
+    digest = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    return f"sha256={digest}"
 
 
 def verify_signature(*, secret: str, body: bytes, timestamp: str, signature: str) -> None:
@@ -41,18 +56,16 @@ def verify_signature(*, secret: str, body: bytes, timestamp: str, signature: str
     if abs(int(time.time()) - timestamp_value) > SIGNATURE_TTL_SECONDS:
         raise HTTPException(status_code=401, detail="stale relay signature")
 
-    payload = timestamp.encode("utf-8") + b"." + body
-    expected = "sha256=" + hmac.new(
-        secret.encode("utf-8"),
-        payload,
-        hashlib.sha256,
-    ).hexdigest()
+    expected = build_signature(secret=secret, body=body, timestamp=timestamp)
     if not hmac.compare_digest(expected, signature):
         raise HTTPException(status_code=401, detail="invalid relay signature")
 
 
-@app.post("/internal/inbound/telegram-update")
-async def receive_forwarded_update(request: Request) -> dict[str, Any]:
+@app.post(
+    "/internal/inbound/telegram-update",
+    response_model=ForwardedTelegramUpdateAck,
+)
+async def receive_forwarded_update(request: Request) -> ForwardedTelegramUpdateAck:
     raw_body = await request.body()
     verify_signature(
         secret=INTERNAL_SHARED_SECRET,
@@ -61,7 +74,14 @@ async def receive_forwarded_update(request: Request) -> dict[str, Any]:
         signature=request.headers.get(RELAY_SIGNATURE_HEADER, ""),
     )
 
-    payload = await request.json()
+    try:
+        payload: Any = json.loads(raw_body)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="telegram update must be a JSON object",
+        ) from exc
+
     if not isinstance(payload, dict):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -73,8 +93,8 @@ async def receive_forwarded_update(request: Request) -> dict[str, Any]:
 
     # Example-only handoff point.
     # Replace this block with your own application logic.
-    return {
-        "ok": True,
-        "request_id": request_id,
-        "update_id": update_id,
-    }
+    return ForwardedTelegramUpdateAck(
+        ok=True,
+        request_id=request_id,
+        update_id=update_id if isinstance(update_id, int) else None,
+    )

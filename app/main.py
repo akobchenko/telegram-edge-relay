@@ -16,11 +16,13 @@ from app.api.public import router as public_router
 from app.api.system import router as system_router
 from app.config import get_settings
 from app.core.request_id import RequestIdMiddleware
-from app.logging import configure_logging
+from app.logging import configure_logging, get_logger
 from app.services.backend_forwarder import BackendForwarder
 from app.services.telegram_client import TelegramClient, build_telegram_http_client
 
 import httpx
+
+logger = get_logger("app.main")
 
 
 def create_app() -> FastAPI:
@@ -47,7 +49,25 @@ def create_app() -> FastAPI:
                 shared_secret=settings.internal_shared_secret.get_secret_value(),
                 forward_path=settings.backend_forward_path,
             )
+            logger.info(
+                "application_started",
+                extra={
+                    "app_name": settings.app_name,
+                    "app_version": settings.app_version,
+                    "host": settings.app_host,
+                    "port": settings.app_port,
+                    "log_level": settings.log_level,
+                    "debug": settings.debug,
+                },
+            )
             yield
+        logger.info(
+            "application_stopped",
+            extra={
+                "app_name": settings.app_name,
+                "app_version": settings.app_version,
+            },
+        )
 
     app = FastAPI(
         title=settings.app_name,
@@ -83,4 +103,18 @@ def create_app() -> FastAPI:
     return app
 
 
-app = create_app()
+def main() -> None:
+    import uvicorn
+
+    settings = get_settings()
+    uvicorn.run(
+        "app.main:create_app",
+        factory=True,
+        host=settings.app_host,
+        port=settings.app_port,
+        log_level=settings.log_level.lower(),
+    )
+
+
+if __name__ == "__main__":
+    main()

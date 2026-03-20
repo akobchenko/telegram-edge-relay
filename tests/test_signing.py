@@ -51,6 +51,18 @@ def test_verify_signature_rejects_invalid_format() -> None:
         )
 
 
+def test_verify_signature_rejects_non_hex_signature() -> None:
+    with pytest.raises(SignatureVerificationError, match="invalid signature format"):
+        verify_signature(
+            secret="shared-secret",
+            timestamp="1700000000",
+            signature="sha256=" + ("g" * 64),
+            body=b"payload",
+            ttl_seconds=300,
+            now=1700000001,
+        )
+
+
 def test_verify_signature_rejects_stale_timestamp() -> None:
     body = b"payload"
     timestamp = "1700000000"
