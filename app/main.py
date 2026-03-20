@@ -11,13 +11,13 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException
 
 from app.api.internal import router as internal_router
-from app.api.internal import build_internal_error_response
 from app.api.public import router as public_router
 from app.api.system import router as system_router
 from app.config import get_settings
 from app.core.request_id import RequestIdMiddleware
 from app.logging import configure_logging, get_logger
 from app.services.backend_forwarder import BackendForwarder
+from app.services.internal_telegram import build_internal_error_response
 from app.services.telegram_client import TelegramClient, build_telegram_http_client
 
 import httpx

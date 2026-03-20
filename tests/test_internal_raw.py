@@ -15,6 +15,7 @@ from app.security.signing import (
     INTERNAL_TIMESTAMP_HEADER,
     build_internal_signature,
 )
+from app.services import internal_telegram
 from app.services.telegram_client import TelegramClient
 
 
@@ -297,6 +298,146 @@ def test_raw_multipart_endpoint_preserves_fields_and_files(client: TestClient) -
     transport_client._transport.close()
 
 
+def test_raw_send_photo_multipart_succeeds(client: TestClient) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/sendPhoto")
+        assert request.headers["content-type"].startswith("multipart/form-data")
+        assert b'filename="photo.jpg"' in request.content
+        assert b"image-bytes" in request.content
+        assert b'name="chat_id"' in request.content
+        assert b'name="caption"' in request.content
+        assert (
+            b'{"inline_keyboard":[[{"text":"Open","callback_data":"open"}]]}'
+            in request.content
+        )
+        return httpx.Response(
+            status_code=200,
+            json={"ok": True, "result": {"message_id": 19}},
+        )
+
+    transport_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://api.telegram.org",
+    )
+    client.app.state.telegram_client = TelegramClient(
+        http_client=transport_client,
+        bot_token="123456:test-token",
+        outbound_mode="mixed",
+    )
+
+    request = client.build_request(
+        "POST",
+        "/internal/telegram/raw/sendPhoto",
+        data={
+            "chat_id": "1",
+            "caption": "hello",
+            "reply_markup": json.dumps(
+                {"inline_keyboard": [[{"text": "Open", "callback_data": "open"}]]},
+                separators=(",", ":"),
+            ),
+        },
+        files={"photo": ("photo.jpg", b"image-bytes", "image/jpeg")},
+    )
+    body = request.content
+    headers = signed_headers("test-shared-secret", body)
+    request.headers[INTERNAL_TIMESTAMP_HEADER] = headers[INTERNAL_TIMESTAMP_HEADER]
+    request.headers[INTERNAL_SIGNATURE_HEADER] = headers[INTERNAL_SIGNATURE_HEADER]
+
+    response = client.send(request)
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "result": {"message_id": 19}}
+    transport_client._transport.close()
+
+
+def test_raw_edit_message_media_multipart_preserves_media_field(client: TestClient) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/editMessageMedia")
+        assert request.headers["content-type"].startswith("multipart/form-data")
+        assert (
+            b'{"type":"photo","media":"attach://new-photo","caption":"updated"}'
+            in request.content
+        )
+        assert b'filename="photo.jpg"' in request.content
+        assert b"image-bytes" in request.content
+        return httpx.Response(
+            status_code=200,
+            json={"ok": True, "result": {"message_id": 27}},
+        )
+
+    transport_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://api.telegram.org",
+    )
+    client.app.state.telegram_client = TelegramClient(
+        http_client=transport_client,
+        bot_token="123456:test-token",
+        outbound_mode="mixed",
+    )
+
+    request = client.build_request(
+        "POST",
+        "/internal/telegram/raw/editMessageMedia",
+        data={
+            "chat_id": "1",
+            "message_id": "27",
+            "media": json.dumps(
+                {"type": "photo", "media": "attach://new-photo", "caption": "updated"},
+                separators=(",", ":"),
+            ),
+        },
+        files={"new-photo": ("photo.jpg", b"image-bytes", "image/jpeg")},
+    )
+    body = request.content
+    headers = signed_headers("test-shared-secret", body)
+    request.headers[INTERNAL_TIMESTAMP_HEADER] = headers[INTERNAL_TIMESTAMP_HEADER]
+    request.headers[INTERNAL_SIGNATURE_HEADER] = headers[INTERNAL_SIGNATURE_HEADER]
+
+    response = client.send(request)
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "result": {"message_id": 27}}
+    transport_client._transport.close()
+
+
+def test_raw_multipart_parse_failure_returns_json_envelope(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def broken_parse_form_data(request):  # type: ignore[no-untyped-def]
+        raise internal_telegram.MultipartForwardError("failed to parse form data")
+
+    monkeypatch.setattr(internal_telegram, "parse_form_data", broken_parse_form_data)
+
+    request = client.build_request(
+        "POST",
+        "/internal/telegram/raw/sendPhoto",
+        data={"chat_id": "1"},
+        files={"photo": ("photo.jpg", b"image-bytes", "image/jpeg")},
+    )
+    body = request.content
+    headers = signed_headers("test-shared-secret", body)
+    request.headers[INTERNAL_TIMESTAMP_HEADER] = headers[INTERNAL_TIMESTAMP_HEADER]
+    request.headers[INTERNAL_SIGNATURE_HEADER] = headers[INTERNAL_SIGNATURE_HEADER]
+
+    response = client.send(request)
+
+    assert response.status_code == 422
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json() == {
+        "ok": False,
+        "error_type": "validation_error",
+        "message": "failed to parse form data",
+        "status_code": 422,
+        "telegram_status_code": None,
+        "telegram_error_code": None,
+        "telegram_description": None,
+        "telegram_response": None,
+        "telegram_response_text": None,
+        "details": None,
+    }
+
+
 def test_raw_http_error_preserves_upstream_text(client: TestClient) -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(status_code=500, content=b"upstream unavailable")
@@ -402,6 +543,79 @@ def test_typed_and_raw_send_message_forward_equivalent_payloads(client: TestClie
     assert typed_response.status_code == 200
     assert raw_response.status_code == 200
     assert captured[0] == captured[1]
+    transport_client._transport.close()
+
+
+def test_typed_and_raw_send_photo_succeed_for_equivalent_payloads(client: TestClient) -> None:
+    captured: list[bytes] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request.content)
+        return httpx.Response(
+            status_code=200,
+            json={"ok": True, "result": {"message_id": len(captured)}},
+        )
+
+    transport_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://api.telegram.org",
+    )
+    client.app.state.telegram_client = TelegramClient(
+        http_client=transport_client,
+        bot_token="123456:test-token",
+        outbound_mode="mixed",
+    )
+
+    typed_request = client.build_request(
+        "POST",
+        "/internal/telegram/sendPhoto",
+        data={
+            "chat_id": "1",
+            "caption": "hello",
+            "reply_markup": json.dumps(
+                {"inline_keyboard": [[{"text": "Open", "callback_data": "open"}]]},
+                separators=(",", ":"),
+            ),
+        },
+        files={"photo": ("photo.jpg", b"image-bytes", "image/jpeg")},
+    )
+    typed_body = typed_request.content
+    typed_headers = signed_headers("test-shared-secret", typed_body)
+    typed_request.headers[INTERNAL_TIMESTAMP_HEADER] = typed_headers[INTERNAL_TIMESTAMP_HEADER]
+    typed_request.headers[INTERNAL_SIGNATURE_HEADER] = typed_headers[INTERNAL_SIGNATURE_HEADER]
+
+    raw_request = client.build_request(
+        "POST",
+        "/internal/telegram/raw/sendPhoto",
+        data={
+            "chat_id": "1",
+            "caption": "hello",
+            "reply_markup": json.dumps(
+                {"inline_keyboard": [[{"text": "Open", "callback_data": "open"}]]},
+                separators=(",", ":"),
+            ),
+        },
+        files={"photo": ("photo.jpg", b"image-bytes", "image/jpeg")},
+    )
+    raw_body = raw_request.content
+    raw_headers = signed_headers("test-shared-secret", raw_body)
+    raw_request.headers[INTERNAL_TIMESTAMP_HEADER] = raw_headers[INTERNAL_TIMESTAMP_HEADER]
+    raw_request.headers[INTERNAL_SIGNATURE_HEADER] = raw_headers[INTERNAL_SIGNATURE_HEADER]
+
+    typed_response = client.send(typed_request)
+    raw_response = client.send(raw_request)
+
+    assert typed_response.status_code == 200
+    assert raw_response.status_code == 200
+    for expected in (
+        b'filename="photo.jpg"',
+        b"image-bytes",
+        b'name="chat_id"',
+        b'name="caption"',
+        b'{"inline_keyboard":[[{"text":"Open","callback_data":"open"}]]}',
+    ):
+        assert expected in captured[0]
+        assert expected in captured[1]
     transport_client._transport.close()
 
 
