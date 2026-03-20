@@ -74,6 +74,8 @@ source .venv/bin/activate
 pip install -e .
 ```
 
+This installs all runtime dependencies, including `python-multipart`, which FastAPI needs for the internal `sendPhoto` endpoint.
+
 Create a local env file from `.env.example` and set real values.
 
 The relay does not load `.env` automatically. Export the variables in your shell, inject them with your process manager, or use your container/orchestrator environment settings before startup.
