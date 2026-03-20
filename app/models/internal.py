@@ -126,4 +126,5 @@ class TelegramMethodErrorResponse(BaseModel):
     telegram_error_code: int | None = None
     telegram_description: str | None = None
     telegram_response: dict[str, Any] | None = None
+    telegram_response_text: str | None = None
     details: list[dict[str, Any]] | None = None

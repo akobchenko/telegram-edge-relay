@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import time
-from typing import Any, Literal, cast
+from typing import IO, Any, Literal, cast
 
 import httpx
 from fastapi import Request
@@ -17,6 +17,7 @@ class TelegramApiError(Exception):
     description: str
     error_code: int | None = None
     response_data: dict[str, Any] | None = None
+    response_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -25,15 +26,19 @@ class TelegramHttpError(Exception):
     upstream_status_code: int
     error_code: int | None = None
     response_data: dict[str, Any] | None = None
+    response_text: str | None = None
 
 
 @dataclass(frozen=True)
 class TelegramTransportError(Exception):
     description: str
     error_type: str
+    response_text: str | None = None
 
 
 TelegramOutboundMode = Literal["typed", "mixed", "proxy"]
+TelegramFormFields = list[tuple[str, str]]
+TelegramMultipartFiles = list[tuple[str, tuple[str, IO[bytes] | bytes, str]]]
 
 
 class TelegramClient:
@@ -73,14 +78,14 @@ class TelegramClient:
             error_type="misconfigured",
         )
 
-    async def _post(
+    async def forward_method(
         self,
         *,
         method_name: str,
         route: str,
         json_payload: dict[str, Any] | None = None,
-        form_payload: dict[str, str] | None = None,
-        files: dict[str, tuple[str, bytes, str]] | None = None,
+        form_fields: TelegramFormFields | None = None,
+        files: TelegramMultipartFiles | None = None,
     ) -> dict[str, Any] | bool:
         bot_token = self._require_bot_token(route=route, operation=method_name)
         target = "telegram"
@@ -102,7 +107,7 @@ class TelegramClient:
             response = await self._http_client.post(
                 f"/bot{bot_token}/{method_name}",
                 json=json_payload,
-                data=form_payload,
+                data=form_fields,
                 files=files,
             )
         except httpx.TimeoutException as exc:
@@ -142,6 +147,7 @@ class TelegramClient:
                 error_type="network_error",
             ) from exc
 
+        response_text = response.text
         try:
             data = response.json()
         except ValueError as exc:
@@ -161,6 +167,7 @@ class TelegramClient:
             raise TelegramTransportError(
                 description="telegram returned a malformed response",
                 error_type="invalid_response",
+                response_text=response_text,
             ) from exc
 
         if response.is_success and isinstance(data, dict) and data.get("ok") is True:
@@ -196,6 +203,7 @@ class TelegramClient:
             raise TelegramTransportError(
                 description="telegram success response is malformed",
                 error_type="invalid_response",
+                response_text=response_text,
             )
 
         if not response.is_success:
@@ -227,6 +235,7 @@ class TelegramClient:
                 upstream_status_code=response.status_code,
                 error_code=error_code if isinstance(error_code, int) else None,
                 response_data=response_data,
+                response_text=None if isinstance(data, dict) else response_text,
             )
 
         if isinstance(data, dict):
@@ -256,97 +265,21 @@ class TelegramClient:
             description=description,
             error_code=error_code if isinstance(error_code, int) else None,
             response_data=response_data,
+            response_text=response_text,
         )
 
-    async def call_raw_method(
-        self,
-        *,
-        method_name: str,
-        route: str,
-        payload: dict[str, Any],
-    ) -> dict[str, Any] | bool:
-        return await self._post(
-            method_name=method_name,
-            route=route,
-            json_payload=payload,
-        )
-
-    async def send_message(self, payload: dict[str, Any]) -> dict[str, Any] | bool:
-        return await self.call_raw_method(
-            method_name="sendMessage",
-            route="/internal/telegram/sendMessage",
-            payload=payload,
-        )
-
-    async def send_photo(
-        self,
-        *,
-        payload: dict[str, Any],
-        photo_filename: str,
-        photo_content: bytes,
-        photo_content_type: str,
-    ) -> dict[str, Any] | bool:
-        form_payload = {
-            key: (
-                json.dumps(value, separators=(",", ":"))
-                if isinstance(value, (dict, list))
-                else str(value).lower()
-                if isinstance(value, bool)
-                else str(value)
-            )
-            for key, value in payload.items()
-        }
-        return await self._post(
-            method_name="sendPhoto",
-            route="/internal/telegram/sendPhoto",
-            form_payload=form_payload,
-            files={
-                "photo": (
-                    photo_filename,
-                    photo_content,
-                    photo_content_type,
-                )
-            },
-        )
-
-    async def edit_message_text(self, payload: dict[str, Any]) -> dict[str, Any] | bool:
-        return await self.call_raw_method(
-            method_name="editMessageText",
-            route="/internal/telegram/editMessageText",
-            payload=payload,
-        )
-
-    async def edit_message_caption(self, payload: dict[str, Any]) -> dict[str, Any] | bool:
-        return await self.call_raw_method(
-            method_name="editMessageCaption",
-            route="/internal/telegram/editMessageCaption",
-            payload=payload,
-        )
-
-    async def answer_callback_query(
-        self,
-        payload: dict[str, Any],
-    ) -> dict[str, Any] | bool:
-        return await self.call_raw_method(
-            method_name="answerCallbackQuery",
-            route="/internal/telegram/answerCallbackQuery",
-            payload=payload,
-        )
-
-    async def delete_message(self, payload: dict[str, Any]) -> dict[str, Any] | bool:
-        return await self.call_raw_method(
-            method_name="deleteMessage",
-            route="/internal/telegram/deleteMessage",
-            payload=payload,
-        )
-
-    async def send_chat_action(self, payload: dict[str, Any]) -> dict[str, Any] | bool:
-        return await self.call_raw_method(
-            method_name="sendChatAction",
-            route="/internal/telegram/sendChatAction",
-            payload=payload,
-        )
-
+    @staticmethod
+    def serialize_form_fields(payload: dict[str, Any]) -> TelegramFormFields:
+        fields: TelegramFormFields = []
+        for key, value in payload.items():
+            if isinstance(value, (dict, list)):
+                normalized = json.dumps(value, separators=(",", ":"))
+            elif isinstance(value, bool):
+                normalized = str(value).lower()
+            else:
+                normalized = str(value)
+            fields.append((key, normalized))
+        return fields
 
 def get_telegram_client(request: Request) -> TelegramClient:
     return cast(TelegramClient, request.app.state.telegram_client)

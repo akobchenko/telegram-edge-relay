@@ -28,7 +28,9 @@ from app.security.signing import require_internal_signature
 from app.services.telegram_client import (
     TelegramApiError,
     TelegramClient,
+    TelegramFormFields,
     TelegramHttpError,
+    TelegramMultipartFiles,
     TelegramTransportError,
     get_telegram_client,
 )
@@ -47,6 +49,7 @@ def build_internal_error_response(
     telegram_error_code: int | None = None,
     telegram_description: str | None = None,
     telegram_response: dict[str, Any] | None = None,
+    telegram_response_text: str | None = None,
     details: list[dict[str, Any]] | None = None,
 ) -> JSONResponse:
     error_response = TelegramMethodErrorResponse(
@@ -58,6 +61,7 @@ def build_internal_error_response(
         telegram_error_code=telegram_error_code,
         telegram_description=telegram_description,
         telegram_response=telegram_response,
+        telegram_response_text=telegram_response_text,
         details=details,
     )
     return JSONResponse(status_code=status_code, content=error_response.model_dump())
@@ -85,6 +89,7 @@ def _telegram_error_response(
             telegram_error_code=exc.error_code,
             telegram_description=exc.description,
             telegram_response=exc.response_data,
+            telegram_response_text=exc.response_text,
         )
 
     if isinstance(exc, TelegramApiError):
@@ -104,6 +109,7 @@ def _telegram_error_response(
             telegram_error_code=exc.error_code,
             telegram_description=exc.description,
             telegram_response=exc.response_data,
+            telegram_response_text=exc.response_text,
         )
 
     logger.error(
@@ -119,11 +125,13 @@ def _telegram_error_response(
             error_type="relay_timeout",
             message=exc.description,
             status_code=504,
+            telegram_response_text=exc.response_text,
         )
     return build_internal_error_response(
         error_type="relay_network_error",
         message=exc.description,
         status_code=503 if exc.error_type == "misconfigured" else 502,
+        telegram_response_text=exc.response_text,
     )
 
 
@@ -166,6 +174,113 @@ def _require_raw_mode_allowed(mode: str) -> JSONResponse | None:
     )
 
 
+def _build_multipart_forward_payload(
+    form: Any,
+) -> tuple[TelegramFormFields, TelegramMultipartFiles]:
+    fields: TelegramFormFields = []
+    files: TelegramMultipartFiles = []
+    for key, value in form.multi_items():
+        if isinstance(value, UploadFile) or (
+            hasattr(value, "file")
+            and hasattr(value, "filename")
+            and hasattr(value, "content_type")
+        ):
+            files.append(
+                (
+                    key,
+                    (
+                        value.filename or key,
+                        value.file,
+                        value.content_type or "application/octet-stream",
+                    ),
+                )
+            )
+        else:
+            fields.append((key, value if isinstance(value, str) else str(value)))
+    return fields, files
+
+
+def _typed_json_route(method_name: str) -> str:
+    return f"/internal/telegram/{method_name}"
+
+
+async def _forward_typed_json_method(
+    *,
+    method_name: str,
+    payload: dict[str, Any],
+    telegram_client: TelegramClient,
+) -> TelegramMethodSuccessResponse | JSONResponse:
+    return await _run_telegram_call(
+        telegram_client.forward_method(
+            method_name=method_name,
+            route=_typed_json_route(method_name),
+            json_payload=payload,
+        )
+    )
+
+
+def _request_content_type(request: Request) -> str:
+    return request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+
+
+async def _forward_raw_request(
+    *,
+    request: Request,
+    method_name: str,
+    route: str,
+    telegram_client: TelegramClient,
+    json_object_required: bool,
+) -> TelegramMethodSuccessResponse | JSONResponse:
+    content_type = _request_content_type(request)
+
+    if content_type == "application/json":
+        try:
+            payload = await request.json()
+        except json.JSONDecodeError:
+            return build_internal_error_response(
+                error_type="validation_error",
+                message="request body must be a JSON object",
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        if json_object_required and not isinstance(payload, dict):
+            return build_internal_error_response(
+                error_type="validation_error",
+                message="request body must be a JSON object",
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        if not isinstance(payload, dict):
+            return build_internal_error_response(
+                error_type="validation_error",
+                message="request body must be a JSON object",
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        return await _run_telegram_call(
+            telegram_client.forward_method(
+                method_name=method_name,
+                route=route,
+                json_payload=payload,
+            )
+        )
+
+    if content_type in {"application/x-www-form-urlencoded", "multipart/form-data"}:
+        form = await request.form()
+        form_fields, files = _build_multipart_forward_payload(form)
+        return await _run_telegram_call(
+            telegram_client.forward_method(
+                method_name=method_name,
+                route=route,
+                form_fields=form_fields,
+                files=files or None,
+            )
+        )
+
+    return build_internal_error_response(
+        error_type="validation_error",
+        message="unsupported content type",
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+    )
+
+
 @router.post(
     "/sendMessage",
     response_model=TelegramMethodSuccessResponse,
@@ -182,8 +297,10 @@ async def send_message(
     _: None = Depends(require_internal_signature),
     telegram_client: TelegramClient = Depends(get_telegram_client),
 ) -> TelegramMethodSuccessResponse | JSONResponse:
-    return await _run_telegram_call(
-        telegram_client.send_message(payload.model_dump(exclude_none=True))
+    return await _forward_typed_json_method(
+        method_name="sendMessage",
+        payload=payload.model_dump(exclude_none=True),
+        telegram_client=telegram_client,
     )
 
 
@@ -258,8 +375,12 @@ async def send_photo(
         )
     except ValidationError as exc:
         raise RequestValidationError(exc.errors()) from exc
-    photo_content = await photo.read()
-    if not photo_content:
+    file_object = photo.file
+    current_position = file_object.tell()
+    file_object.seek(0, 2)
+    photo_size = file_object.tell()
+    file_object.seek(current_position)
+    if photo_size <= 0:
         return build_internal_error_response(
             error_type="validation_error",
             message="photo file must not be empty",
@@ -268,7 +389,7 @@ async def send_photo(
     settings = get_settings()
     if (
         settings.telegram_photo_max_bytes is not None
-        and len(photo_content) > settings.telegram_photo_max_bytes
+        and photo_size > settings.telegram_photo_max_bytes
     ):
         return build_internal_error_response(
             error_type="validation_error",
@@ -278,11 +399,13 @@ async def send_photo(
     content_type = photo.content_type or "application/octet-stream"
     filename = photo.filename or "photo"
     return await _run_telegram_call(
-        telegram_client.send_photo(
-            payload=payload.model_dump(exclude_none=True),
-            photo_filename=filename,
-            photo_content=photo_content,
-            photo_content_type=content_type,
+        telegram_client.forward_method(
+            method_name="sendPhoto",
+            route="/internal/telegram/sendPhoto",
+            form_fields=telegram_client.serialize_form_fields(
+                payload.model_dump(exclude_none=True)
+            ),
+            files=[("photo", (filename, photo.file, content_type))],
         )
     )
 
@@ -303,8 +426,10 @@ async def edit_message_text(
     _: None = Depends(require_internal_signature),
     telegram_client: TelegramClient = Depends(get_telegram_client),
 ) -> TelegramMethodSuccessResponse | JSONResponse:
-    return await _run_telegram_call(
-        telegram_client.edit_message_text(payload.model_dump(exclude_none=True))
+    return await _forward_typed_json_method(
+        method_name="editMessageText",
+        payload=payload.model_dump(exclude_none=True),
+        telegram_client=telegram_client,
     )
 
 
@@ -324,8 +449,10 @@ async def edit_message_caption(
     _: None = Depends(require_internal_signature),
     telegram_client: TelegramClient = Depends(get_telegram_client),
 ) -> TelegramMethodSuccessResponse | JSONResponse:
-    return await _run_telegram_call(
-        telegram_client.edit_message_caption(payload.model_dump(exclude_none=True))
+    return await _forward_typed_json_method(
+        method_name="editMessageCaption",
+        payload=payload.model_dump(exclude_none=True),
+        telegram_client=telegram_client,
     )
 
 
@@ -345,8 +472,10 @@ async def answer_callback_query(
     _: None = Depends(require_internal_signature),
     telegram_client: TelegramClient = Depends(get_telegram_client),
 ) -> TelegramMethodSuccessResponse | JSONResponse:
-    return await _run_telegram_call(
-        telegram_client.answer_callback_query(payload.model_dump(exclude_none=True))
+    return await _forward_typed_json_method(
+        method_name="answerCallbackQuery",
+        payload=payload.model_dump(exclude_none=True),
+        telegram_client=telegram_client,
     )
 
 
@@ -366,8 +495,10 @@ async def delete_message(
     _: None = Depends(require_internal_signature),
     telegram_client: TelegramClient = Depends(get_telegram_client),
 ) -> TelegramMethodSuccessResponse | JSONResponse:
-    return await _run_telegram_call(
-        telegram_client.delete_message(payload.model_dump(exclude_none=True))
+    return await _forward_typed_json_method(
+        method_name="deleteMessage",
+        payload=payload.model_dump(exclude_none=True),
+        telegram_client=telegram_client,
     )
 
 
@@ -387,8 +518,10 @@ async def send_chat_action(
     _: None = Depends(require_internal_signature),
     telegram_client: TelegramClient = Depends(get_telegram_client),
 ) -> TelegramMethodSuccessResponse | JSONResponse:
-    return await _run_telegram_call(
-        telegram_client.send_chat_action(payload.model_dump(exclude_none=True))
+    return await _forward_typed_json_method(
+        method_name="sendChatAction",
+        payload=payload.model_dump(exclude_none=True),
+        telegram_client=telegram_client,
     )
 
 
@@ -405,8 +538,8 @@ async def send_chat_action(
     },
 )
 async def call_raw_method(
+    request: Request,
     method: str,
-    payload: dict[str, Any],
     _: None = Depends(require_internal_signature),
     telegram_client: TelegramClient = Depends(get_telegram_client),
 ) -> TelegramMethodSuccessResponse | JSONResponse:
@@ -449,10 +582,35 @@ async def call_raw_method(
             mode=telegram_client.outbound_mode,
         ),
     )
-    return await _run_telegram_call(
-        telegram_client.call_raw_method(
-            method_name=method,
-            route=route,
-            payload=payload,
-        )
+    return await _forward_raw_request(
+        request=request,
+        method_name=method,
+        route=route,
+        telegram_client=telegram_client,
+        json_object_required=True,
+    )
+
+
+@router.post(
+    "/editMessageMedia",
+    response_model=TelegramMethodSuccessResponse,
+    responses={
+        422: {"model": TelegramMethodErrorResponse},
+        401: {"model": TelegramMethodErrorResponse},
+        502: {"model": TelegramMethodErrorResponse},
+        503: {"model": TelegramMethodErrorResponse},
+        504: {"model": TelegramMethodErrorResponse},
+    },
+)
+async def edit_message_media(
+    request: Request,
+    _: None = Depends(require_internal_signature),
+    telegram_client: TelegramClient = Depends(get_telegram_client),
+) -> TelegramMethodSuccessResponse | JSONResponse:
+    return await _forward_raw_request(
+        request=request,
+        method_name="editMessageMedia",
+        route="/internal/telegram/editMessageMedia",
+        telegram_client=telegram_client,
+        json_object_required=True,
     )

@@ -137,6 +137,7 @@ def test_raw_endpoint_is_rejected_in_typed_mode(
         "telegram_error_code": None,
         "telegram_description": None,
         "telegram_response": None,
+        "telegram_response_text": None,
         "details": None,
     }
 
@@ -246,6 +247,86 @@ def test_raw_endpoint_maps_telegram_api_error(client: TestClient) -> None:
     transport_client._transport.close()
 
 
+def test_raw_multipart_endpoint_preserves_fields_and_files(client: TestClient) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/sendDocument")
+        assert request.headers["content-type"].startswith("multipart/form-data")
+        assert b'filename="doc.txt"' in request.content
+        assert b"hello document" in request.content
+        assert (
+            b'{"inline_keyboard":[[{"text":"Open","callback_data":"open"}]]}'
+            in request.content
+        )
+        return httpx.Response(
+            status_code=200,
+            json={"ok": True, "result": {"message_id": 18}},
+        )
+
+    transport_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://api.telegram.org",
+    )
+    client.app.state.telegram_client = TelegramClient(
+        http_client=transport_client,
+        bot_token="123456:test-token",
+        outbound_mode="mixed",
+    )
+
+    request = client.build_request(
+        "POST",
+        "/internal/telegram/raw/sendDocument",
+        data={
+            "chat_id": "1",
+            "caption": "hello",
+            "reply_markup": json.dumps(
+                {"inline_keyboard": [[{"text": "Open", "callback_data": "open"}]]},
+                separators=(",", ":"),
+            ),
+        },
+        files={"document": ("doc.txt", b"hello document", "text/plain")},
+    )
+    body = request.content
+    headers = signed_headers("test-shared-secret", body)
+    request.headers[INTERNAL_TIMESTAMP_HEADER] = headers[INTERNAL_TIMESTAMP_HEADER]
+    request.headers[INTERNAL_SIGNATURE_HEADER] = headers[INTERNAL_SIGNATURE_HEADER]
+
+    response = client.send(request)
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "result": {"message_id": 18}}
+    transport_client._transport.close()
+
+
+def test_raw_http_error_preserves_upstream_text(client: TestClient) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code=500, content=b"upstream unavailable")
+
+    transport_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://api.telegram.org",
+    )
+    client.app.state.telegram_client = TelegramClient(
+        http_client=transport_client,
+        bot_token="123456:test-token",
+        outbound_mode="mixed",
+    )
+
+    body = json.dumps({"chat_id": 1}).encode("utf-8")
+    response = client.post(
+        "/internal/telegram/raw/sendDice",
+        content=body,
+        headers={
+            "content-type": "application/json",
+            **signed_headers("test-shared-secret", body),
+        },
+    )
+
+    assert response.status_code == 500
+    assert response.json()["error_type"] == "telegram_http_error"
+    assert response.json()["telegram_response_text"] == "upstream unavailable"
+    transport_client._transport.close()
+
+
 def test_raw_endpoint_rejects_non_object_body(client: TestClient) -> None:
     body = json.dumps([{"chat_id": 1}]).encode("utf-8")
 
@@ -260,6 +341,68 @@ def test_raw_endpoint_rejects_non_object_body(client: TestClient) -> None:
 
     assert response.status_code == 422
     assert response.json()["error_type"] == "validation_error"
+
+
+def test_typed_and_raw_send_message_forward_equivalent_payloads(client: TestClient) -> None:
+    captured: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(
+            status_code=200,
+            json={"ok": True, "result": {"message_id": len(captured)}},
+        )
+
+    transport_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://api.telegram.org",
+    )
+    client.app.state.telegram_client = TelegramClient(
+        http_client=transport_client,
+        bot_token="123456:test-token",
+        outbound_mode="mixed",
+    )
+
+    typed_body = json.dumps(
+        {
+            "chat_id": 1,
+            "text": "hello",
+            "reply_markup": {
+                "inline_keyboard": [[{"text": "Open", "callback_data": "open"}]]
+            },
+        }
+    ).encode("utf-8")
+    raw_body = json.dumps(
+        {
+            "chat_id": 1,
+            "text": "hello",
+            "reply_markup": {
+                "inline_keyboard": [[{"text": "Open", "callback_data": "open"}]]
+            },
+        }
+    ).encode("utf-8")
+
+    typed_response = client.post(
+        "/internal/telegram/sendMessage",
+        content=typed_body,
+        headers={
+            "content-type": "application/json",
+            **signed_headers("test-shared-secret", typed_body),
+        },
+    )
+    raw_response = client.post(
+        "/internal/telegram/raw/sendMessage",
+        content=raw_body,
+        headers={
+            "content-type": "application/json",
+            **signed_headers("test-shared-secret", raw_body),
+        },
+    )
+
+    assert typed_response.status_code == 200
+    assert raw_response.status_code == 200
+    assert captured[0] == captured[1]
+    transport_client._transport.close()
 
 
 def test_proxy_mode_preserves_normalized_error_handling(

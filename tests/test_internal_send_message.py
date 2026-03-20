@@ -73,6 +73,7 @@ def test_send_message_rejects_invalid_signature(client: TestClient) -> None:
         "telegram_error_code": None,
         "telegram_description": None,
         "telegram_response": None,
+        "telegram_response_text": None,
         "details": None,
     }
 
@@ -99,7 +100,8 @@ def test_send_message_rejects_invalid_body(client: TestClient) -> None:
 def test_send_message_returns_mocked_telegram_success(client: TestClient) -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path.endswith("/sendMessage")
-        assert request.json()["reply_markup"]["inline_keyboard"][0][0]["text"] == "Open"
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["reply_markup"]["inline_keyboard"][0][0]["text"] == "Open"
         return httpx.Response(
             status_code=200,
             json={
@@ -180,21 +182,21 @@ def test_send_message_returns_mocked_telegram_api_error(client: TestClient) -> N
     )
 
     assert response.status_code == 502
-    assert response.json() == {
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error_type"] == "telegram_api_error"
+    assert payload["message"] == "telegram returned an application error"
+    assert payload["status_code"] == 502
+    assert payload["telegram_status_code"] is None
+    assert payload["telegram_error_code"] == 400
+    assert payload["telegram_description"] == "Bad Request: chat not found"
+    assert payload["telegram_response"] == {
         "ok": False,
-        "error_type": "telegram_api_error",
-        "message": "telegram returned an application error",
-        "status_code": 502,
-        "telegram_status_code": None,
-        "telegram_error_code": 400,
-        "telegram_description": "Bad Request: chat not found",
-        "telegram_response": {
-            "ok": False,
-            "description": "Bad Request: chat not found",
-            "error_code": 400,
-        },
-        "details": None,
+        "description": "Bad Request: chat not found",
+        "error_code": 400,
     }
+    assert payload["telegram_response_text"] is not None
+    assert payload["details"] is None
 
     transport_client._transport.close()
 
@@ -233,6 +235,7 @@ def test_send_message_handles_timeout(client: TestClient) -> None:
         "telegram_error_code": None,
         "telegram_description": None,
         "telegram_response": None,
+        "telegram_response_text": None,
         "details": None,
     }
 

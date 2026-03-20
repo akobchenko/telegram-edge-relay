@@ -256,3 +256,51 @@ def test_send_chat_action_handles_timeout(client: TestClient) -> None:
     assert response.json()["error_type"] == "relay_timeout"
 
     transport_client._transport.close()
+
+
+def test_edit_message_media_multipart_preserves_fields(client: TestClient) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/editMessageMedia")
+        assert request.headers["content-type"].startswith("multipart/form-data")
+        assert (
+            b'{"type":"photo","media":"attach://new-photo","caption":"updated"}'
+            in request.content
+        )
+        assert (
+            b'{"inline_keyboard":[[{"text":"Refresh","callback_data":"refresh"}]]}'
+            in request.content
+        )
+        assert b'filename="photo.jpg"' in request.content
+        assert b"image-bytes" in request.content
+        return httpx.Response(
+            status_code=200,
+            json={"ok": True, "result": {"message_id": 21}},
+        )
+
+    transport_client = install_mock_telegram_client(
+        client,
+        httpx.MockTransport(handler),
+    )
+    response = send_signed_multipart(
+        client=client,
+        secret="test-shared-secret",
+        path="/internal/telegram/editMessageMedia",
+        data={
+            "chat_id": "1",
+            "message_id": "21",
+            "media": json.dumps(
+                {"type": "photo", "media": "attach://new-photo", "caption": "updated"},
+                separators=(",", ":"),
+            ),
+            "reply_markup": json.dumps(
+                {"inline_keyboard": [[{"text": "Refresh", "callback_data": "refresh"}]]},
+                separators=(",", ":"),
+            ),
+        },
+        files={"new-photo": ("photo.jpg", b"image-bytes", "image/jpeg")},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "result": {"message_id": 21}}
+
+    transport_client._transport.close()

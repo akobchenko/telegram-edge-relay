@@ -56,6 +56,7 @@ Internal outbound:
 - `POST /internal/telegram/sendPhoto`
 - `POST /internal/telegram/editMessageText`
 - `POST /internal/telegram/editMessageCaption`
+- `POST /internal/telegram/editMessageMedia`
 - `POST /internal/telegram/answerCallbackQuery`
 - `POST /internal/telegram/deleteMessage`
 - `POST /internal/telegram/sendChatAction`
@@ -259,7 +260,7 @@ Outbound modes:
 
 - `typed`: only the explicitly implemented typed endpoints are allowed; raw fallback is rejected
 - `mixed`: default and recommended mode; typed endpoints remain primary, and `/internal/telegram/raw/{method}` is available as a trusted internal escape hatch
-- `proxy`: JSON-based typed endpoints route through the same generic Telegram method helper, while `sendPhoto` remains on the typed multipart path because raw v1 does not support file upload
+- `proxy`: typed endpoints remain available for compatibility, but both typed and raw requests use the same generic Telegram forwarding engine for JSON, form-urlencoded, and multipart requests
 
 Typed endpoints remain the preferred interface.
 Raw/proxy mode is intended only for trusted internal/private use.
@@ -284,7 +285,8 @@ Normalized error envelope fields:
 - `error_type`
 - `message`
 - `status_code`
-- optional Telegram metadata for Telegram-originated failures
+- optional Telegram metadata for Telegram-originated failures:
+  `telegram_status_code`, `telegram_error_code`, `telegram_description`, `telegram_response`, `telegram_response_text`
 - optional `details` for validation failures
 
 ## Internal API Examples
@@ -392,8 +394,6 @@ Portable backend advice:
 - compute HMAC over the exact serialized body bytes
 - send that body with matching `X-Relay-Timestamp` and `X-Relay-Signature`
 
-Raw fallback/proxy v1 does not support multipart file upload. File uploads must continue using the typed `sendPhoto` endpoint.
-
 ### raw fallback example: sendDice
 
 ```bash
@@ -425,6 +425,10 @@ curl -X POST "${RELAY_BASE_URL}/internal/telegram/raw/getChatMemberCount" \
   -H "X-Relay-Signature: ${SIGNATURE}" \
   -d "$BODY"
 ```
+
+### raw fallback multipart note
+
+The raw endpoint also accepts signed `multipart/form-data`, including methods such as `sendDocument` and `editMessageMedia`. As with the typed `sendPhoto` endpoint, the backend must sign the exact serialized multipart body bytes, so this is best implemented in backend code rather than with ad hoc shell `curl -F` commands.
 
 ## Forwarded Webhook Contract
 
@@ -461,10 +465,11 @@ Recommended backend behavior:
 
 - verify `X-Relay-Timestamp` and `X-Relay-Signature` on inbound forwarded updates
 - treat the relay as a transport adapter, not as an application backend
-- keep outbound requests explicit per Telegram method you actually use
+- prefer the typed internal endpoints for your steady-state contract
+- use `/internal/telegram/raw/{method}` only for rare or not-yet-covered Bot API methods
 - reuse the same request-signing code for both directions
 
-The relay contract is intentionally narrow. If a bot method is not implemented, add it explicitly rather than exposing the full Telegram Bot API surface by default.
+The relay preserves a normalized internal success/error envelope, but it also includes original Telegram details such as upstream status, `error_code`, `description`, parsed JSON response, and raw response text when available so backend clients can keep Telegram-like recovery logic without brittle string parsing.
 
 ## Python Examples
 
