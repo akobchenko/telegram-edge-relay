@@ -7,6 +7,7 @@ from typing import Any, Literal, cast
 import httpx
 from fastapi import Request
 
+from app.config import get_settings
 from app.logging import build_log_extra, get_logger
 
 
