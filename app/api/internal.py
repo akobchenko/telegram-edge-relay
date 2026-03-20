@@ -4,7 +4,7 @@ from collections.abc import Awaitable
 import re
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi import status
 from fastapi.responses import JSONResponse
@@ -199,28 +199,36 @@ async def send_message(
     },
 )
 async def send_photo(
+    request: Request,
     _: None = Depends(require_internal_signature),
     telegram_client: TelegramClient = Depends(get_telegram_client),
-    chat_id: int | str = Form(...),
-    photo: UploadFile = File(...),
-    caption: str | None = Form(default=None),
-    parse_mode: str | None = Form(default=None),
-    disable_notification: bool | None = Form(default=None),
-    protect_content: bool | None = Form(default=None),
-    message_thread_id: int | None = Form(default=None),
-    reply_to_message_id: int | None = Form(default=None),
-    allow_sending_without_reply: bool | None = Form(default=None),
 ) -> TelegramMethodSuccessResponse | JSONResponse:
+    form = await request.form()
+    photo = form.get("photo")
+    if not isinstance(photo, UploadFile) and not (
+        hasattr(photo, "read") and hasattr(photo, "filename")
+    ):
+        raise RequestValidationError(
+            [
+                {
+                    "type": "missing",
+                    "loc": ("body", "photo"),
+                    "msg": "Field required",
+                    "input": None,
+                }
+            ]
+        )
+
     try:
         payload = TelegramSendPhotoRequest(
-            chat_id=chat_id,
-            caption=caption,
-            parse_mode=parse_mode,
-            disable_notification=disable_notification,
-            protect_content=protect_content,
-            message_thread_id=message_thread_id,
-            reply_to_message_id=reply_to_message_id,
-            allow_sending_without_reply=allow_sending_without_reply,
+            chat_id=form.get("chat_id"),
+            caption=form.get("caption"),
+            parse_mode=form.get("parse_mode"),
+            disable_notification=form.get("disable_notification"),
+            protect_content=form.get("protect_content"),
+            message_thread_id=form.get("message_thread_id"),
+            reply_to_message_id=form.get("reply_to_message_id"),
+            allow_sending_without_reply=form.get("allow_sending_without_reply"),
         )
     except ValidationError as exc:
         raise RequestValidationError(exc.errors()) from exc
