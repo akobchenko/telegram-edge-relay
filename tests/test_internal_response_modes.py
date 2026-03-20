@@ -298,3 +298,58 @@ def test_normalized_mode_regression_keeps_existing_error_envelope(
     assert response.json()["error_type"] == "telegram_http_error"
     assert response.json()["telegram_description"] == "Bad Request: query is too old"
     transport_client._transport.close()
+
+
+def test_default_response_mode_is_transparent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_HOST", "127.0.0.1")
+    monkeypatch.setenv("APP_PORT", "8080")
+    monkeypatch.setenv("LOG_LEVEL", "INFO")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:test-token")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_PATH_SECRET", "webhook-secret-value")
+    monkeypatch.setenv("BACKEND_BASE_URL", "https://backend.example")
+    monkeypatch.setenv("BACKEND_FORWARD_PATH", "/internal/inbound/telegram-update")
+    monkeypatch.setenv("INTERNAL_SHARED_SECRET", "test-shared-secret")
+    monkeypatch.setenv("SIGNATURE_TTL_SECONDS", "300")
+    monkeypatch.setenv("TELEGRAM_TIMEOUT_SECONDS", "10")
+    monkeypatch.setenv("BACKEND_TIMEOUT_SECONDS", "10")
+    monkeypatch.setenv("DEBUG", "false")
+    monkeypatch.delenv("TELEGRAM_RESPONSE_MODE", raising=False)
+
+    get_settings.cache_clear()
+    assert get_settings().telegram_response_mode == "transparent"
+    get_settings.cache_clear()
+
+
+def test_transparent_mode_internal_failure_never_returns_plain_text_500(
+    transparent_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def broken_forward_method(**kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("unexpected failure")
+
+    monkeypatch.setattr(
+        transparent_client.app.state.telegram_client,
+        "forward_method",
+        broken_forward_method,
+    )
+
+    body = json.dumps({"chat_id": 1, "text": "hello"}).encode("utf-8")
+    response = transparent_client.post(
+        "/internal/telegram/sendMessage",
+        content=body,
+        headers={
+            "content-type": "application/json",
+            **signed_headers("test-shared-secret", body),
+        },
+    )
+
+    assert response.status_code == 500
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json() == {
+        "ok": False,
+        "description": "internal relay error",
+        "error_type": "relay_network_error",
+        "error_code": 500,
+    }

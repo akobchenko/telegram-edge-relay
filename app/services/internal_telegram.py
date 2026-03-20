@@ -141,6 +141,21 @@ def _build_transport_error_response(
     )
 
 
+def build_relay_local_error_response(
+    *,
+    error_type: str,
+    message: str,
+    status_code: int,
+    response_text: str | None = None,
+) -> JSONResponse:
+    return _build_transport_error_response(
+        error_type=error_type,
+        message=message,
+        status_code=status_code,
+        response_text=response_text,
+    )
+
+
 def _build_upstream_error_response(
     *,
     error_type: str,
@@ -529,6 +544,7 @@ async def forward_send_photo(
 
 __all__ = [
     "build_internal_error_response",
+    "build_relay_local_error_response",
     "build_multipart_forward_payload",
     "forward_raw_request",
     "forward_send_photo",

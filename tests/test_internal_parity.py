@@ -372,3 +372,41 @@ def test_typed_and_raw_answer_callback_query_return_same_transparent_error(
     }
 
     transport_client._transport.close()
+
+
+def test_typed_and_raw_send_message_return_same_transparent_telegram_500(
+    client: TestClient,
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status_code=500,
+            json={
+                "ok": False,
+                "error_code": 500,
+                "description": "Internal Server Error: retry later",
+            },
+        )
+
+    transport_client = install_mock_client(client, httpx.MockTransport(handler))
+    payload = {"chat_id": 1, "text": "hello"}
+
+    typed_response = post_signed_json(
+        client,
+        path="/internal/telegram/sendMessage",
+        payload=payload,
+    )
+    raw_response = post_signed_json(
+        client,
+        path="/internal/telegram/raw/sendMessage",
+        payload=payload,
+    )
+
+    assert typed_response.status_code == 500
+    assert raw_response.status_code == 500
+    assert typed_response.json() == raw_response.json() == {
+        "ok": False,
+        "error_code": 500,
+        "description": "Internal Server Error: retry later",
+    }
+
+    transport_client._transport.close()

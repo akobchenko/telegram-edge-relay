@@ -8,6 +8,7 @@ from fastapi.exception_handlers import (
     request_validation_exception_handler,
 )
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
 from app.api.internal import router as internal_router
@@ -15,9 +16,12 @@ from app.api.public import router as public_router
 from app.api.system import router as system_router
 from app.config import get_settings
 from app.core.request_id import RequestIdMiddleware
-from app.logging import configure_logging, get_logger
+from app.logging import build_log_extra, configure_logging, get_logger
 from app.services.backend_forwarder import BackendForwarder
-from app.services.internal_telegram import build_internal_error_response
+from app.services.internal_telegram import (
+    build_internal_error_response,
+    build_relay_local_error_response,
+)
 from app.services.telegram_client import TelegramClient, build_telegram_http_client
 
 import httpx
@@ -100,6 +104,32 @@ def create_app() -> FastAPI:
                 status_code=401,
             )
         return await http_exception_handler(request, exc)
+
+    @app.exception_handler(Exception)
+    async def handle_internal_telegram_exception(request, exc: Exception):
+        logger.exception(
+            "unhandled_exception",
+            extra=build_log_extra(
+                direction="telegram_outbound"
+                if request.url.path.startswith("/internal/telegram")
+                else "system",
+                route=request.url.path,
+                target="relay",
+                elapsed_ms=0.0,
+                status=500,
+                outcome="internal_error",
+            ),
+        )
+        if request.url.path.startswith("/internal/telegram"):
+            return build_relay_local_error_response(
+                error_type="relay_network_error",
+                message="internal relay error",
+                status_code=500,
+            )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal Server Error"},
+        )
 
     return app
 

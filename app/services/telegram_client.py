@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 import time
 import uuid
 from typing import Any, Literal, cast

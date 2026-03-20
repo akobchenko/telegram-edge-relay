@@ -31,6 +31,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     monkeypatch.setenv("SIGNATURE_TTL_SECONDS", "300")
     monkeypatch.setenv("TELEGRAM_TIMEOUT_SECONDS", "10")
     monkeypatch.setenv("BACKEND_TIMEOUT_SECONDS", "10")
+    monkeypatch.setenv("TELEGRAM_RESPONSE_MODE", "normalized")
     monkeypatch.setenv("DEBUG", "false")
     get_settings.cache_clear()
     app = create_app()

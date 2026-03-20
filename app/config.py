@@ -44,7 +44,7 @@ class Settings(BaseModel):
         alias="TELEGRAM_OUTBOUND_MODE",
     )
     telegram_response_mode: Literal["normalized", "transparent"] = Field(
-        default="normalized",
+        default="transparent",
         alias="TELEGRAM_RESPONSE_MODE",
     )
     telegram_photo_max_bytes: int | None = Field(

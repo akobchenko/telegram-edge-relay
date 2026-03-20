@@ -35,6 +35,7 @@ def build_client(
     monkeypatch.setenv("SIGNATURE_TTL_SECONDS", "300")
     monkeypatch.setenv("TELEGRAM_TIMEOUT_SECONDS", "10")
     monkeypatch.setenv("BACKEND_TIMEOUT_SECONDS", "10")
+    monkeypatch.setenv("TELEGRAM_RESPONSE_MODE", "normalized")
     monkeypatch.setenv("DEBUG", "false")
     monkeypatch.delenv("TELEGRAM_OUTBOUND_MODE", raising=False)
     if outbound_mode is not None:

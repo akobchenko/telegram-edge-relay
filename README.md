@@ -120,7 +120,7 @@ The service fails fast on missing or invalid required values.
 | `SIGNATURE_TTL_SECONDS` | yes | Allowed timestamp skew/window for signed internal requests |
 | `TELEGRAM_TIMEOUT_SECONDS` | yes | Timeout for outbound Telegram requests |
 | `TELEGRAM_OUTBOUND_MODE` | no | Outbound mode: `typed`, `mixed`, or `proxy`; defaults to `mixed` |
-| `TELEGRAM_RESPONSE_MODE` | no | Internal outbound response mode: `normalized` or `transparent`; defaults to `normalized` |
+| `TELEGRAM_RESPONSE_MODE` | no | Internal outbound response mode: `normalized` or `transparent`; defaults to `transparent` |
 | `TELEGRAM_PHOTO_MAX_BYTES` | no | Optional max upload size for internal `sendPhoto` |
 | `BACKEND_TIMEOUT_SECONDS` | yes | Timeout for forwarding webhook updates to the backend |
 | `DEBUG` | yes | Enables plain-text logs when `true`; keep `false` in production |
@@ -256,8 +256,8 @@ All internal outbound endpoints:
 
 Response modes:
 
-- `normalized`: relay returns its current internal envelope on failures and `{"ok": true, "result": ...}` on success
-- `transparent`: relay stays operationally observable, but successful and Telegram-originated error responses are returned as close as possible to native Telegram Bot API responses
+- `transparent`: default; relay stays operationally observable, but successful and Telegram-originated error responses are returned as close as possible to native Telegram Bot API responses
+- `normalized`: legacy compatibility mode; relay returns its internal envelope on failures and `{"ok": true, "result": ...}` on success
 
 In `transparent` mode:
 
@@ -265,6 +265,12 @@ In `transparent` mode:
 - Telegram JSON errors are returned with the same HTTP status and original Telegram JSON body
 - upstream non-JSON errors still return deterministic JSON, including `raw_response_text`
 - relay-local failures such as auth, validation, timeout, or transport errors still return deterministic JSON because there is no native Telegram response to mirror
+
+Migration:
+
+- new integrations should use the default `transparent` mode
+- existing integrations that still depend on the relay error envelope can pin `TELEGRAM_RESPONSE_MODE=normalized`
+- the long-term intended backend contract is: Telegram-like responses for normal upstream success/failure, relay-defined responses only for relay-local failures
 
 Outbound modes:
 
@@ -491,7 +497,8 @@ Remaining intentional drift from native Telegram API:
 
 - internal endpoints still require relay HMAC auth and timestamp checks
 - relay-local failures such as auth, validation, timeout, or transport errors still return deterministic relay JSON
-- typed endpoints still validate a small set of stable fields before forwarding
+- typed endpoints still validate a small set of stable fields before forwarding:
+  `text` length, `caption` max length, required message target combinations, callback query id presence, and positive numeric identifiers where Telegram also expects them
 - typed multipart wrappers may reject malformed inputs earlier than Telegram itself when that improves operational safety
 
 ## Python Examples

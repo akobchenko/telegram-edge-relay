@@ -55,7 +55,7 @@ class TelegramEditMessageCaptionRequest(BaseModel):
     chat_id: int | str | None = None
     message_id: int | None = Field(default=None, ge=1)
     inline_message_id: str | None = None
-    caption: str = Field(min_length=1, max_length=1024)
+    caption: str | None = Field(default=None, max_length=1024)
     parse_mode: ParseMode | None = None
     reply_markup: dict[str, Any] | None = None
 
