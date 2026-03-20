@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import time
+import uuid
 from typing import IO, Any, Literal, cast
 
 import httpx
@@ -81,33 +82,50 @@ class TelegramClient:
     def _build_multipart_body(
         self,
         *,
-        method_path: str,
         form_fields: TelegramFormFields | None,
         files: TelegramMultipartFiles,
     ) -> tuple[bytes, str]:
-        sync_client = httpx.Client(base_url=str(self._http_client.base_url))
-        try:
-            multipart_request = sync_client.build_request(
-                "POST",
-                method_path,
-                data=form_fields,
-                files=files,
+        boundary = f"relay-{uuid.uuid4().hex}"
+        body = bytearray()
+
+        def append_text_part(name: str, value: str) -> None:
+            body.extend(f"--{boundary}\r\n".encode("utf-8"))
+            body.extend(
+                f'Content-Disposition: form-data; name="{_escape_multipart_value(name)}"\r\n\r\n'.encode(
+                    "utf-8"
+                )
             )
-            raw_body = multipart_request.read()
-            multipart_content_type = multipart_request.headers.get("content-type")
-            if multipart_content_type is None:
-                stream = getattr(multipart_request, "stream", None)
-                get_headers = getattr(stream, "get_headers", None)
-                if callable(get_headers):
-                    stream_headers = get_headers()
-                    multipart_content_type = stream_headers.get(
-                        "Content-Type"
-                    ) or stream_headers.get("content-type")
-            if multipart_content_type is None:
+            body.extend(value.encode("utf-8"))
+            body.extend(b"\r\n")
+
+        def append_file_part(
+            name: str,
+            filename: str,
+            content: bytes,
+            content_type: str,
+        ) -> None:
+            body.extend(f"--{boundary}\r\n".encode("utf-8"))
+            body.extend(
+                (
+                    f'Content-Disposition: form-data; name="{_escape_multipart_value(name)}"; '
+                    f'filename="{_escape_multipart_value(filename)}"\r\n'
+                ).encode("utf-8")
+            )
+            body.extend(f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"))
+            body.extend(content)
+            body.extend(b"\r\n")
+
+        for key, value in form_fields or []:
+            append_text_part(key, value)
+
+        for key, file_payload in files:
+            filename, file_content, content_type = file_payload
+            if not isinstance(file_content, bytes):
                 raise RuntimeError("failed to build multipart request")
-            return raw_body, multipart_content_type
-        finally:
-            sync_client.close()
+            append_file_part(key, filename, file_content, content_type)
+
+        body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+        return bytes(body), f"multipart/form-data; boundary={boundary}"
 
     async def forward_method(
         self,
@@ -138,7 +156,6 @@ class TelegramClient:
         try:
             if files is not None:
                 raw_body, multipart_content_type = self._build_multipart_body(
-                    method_path=method_path,
                     form_fields=form_fields,
                     files=files,
                 )
@@ -190,6 +207,25 @@ class TelegramClient:
                 error_type="network_error",
             ) from exc
         except RuntimeError as exc:
+            self._logger.error(
+                "telegram_call_completed",
+                extra=build_log_extra(
+                    direction="telegram_outbound",
+                    route=route,
+                    target=target,
+                    elapsed_ms=round((time.perf_counter() - start_time) * 1000, 2),
+                    status=502,
+                    outcome="network_error",
+                    operation=method_name,
+                    mode=self._outbound_mode,
+                ),
+            )
+            raise TelegramTransportError(
+                description="telegram transport error",
+                error_type="network_error",
+                response_text=str(exc),
+            ) from exc
+        except Exception as exc:
             self._logger.error(
                 "telegram_call_completed",
                 extra=build_log_extra(
@@ -345,6 +381,10 @@ class TelegramClient:
 
 def get_telegram_client(request: Request) -> TelegramClient:
     return cast(TelegramClient, request.app.state.telegram_client)
+
+
+def _escape_multipart_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def build_telegram_http_client() -> httpx.AsyncClient:
