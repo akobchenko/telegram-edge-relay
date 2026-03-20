@@ -115,7 +115,7 @@ class TelegramClient:
                 multipart_content_type = multipart_request.headers.get("content-type")
                 if multipart_content_type is None:
                     raise RuntimeError("failed to build multipart request")
-                raw_body = await multipart_request.aread()
+                raw_body = multipart_request.read()
                 response = await self._http_client.post(
                     method_path,
                     content=raw_body,
