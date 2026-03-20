@@ -25,7 +25,7 @@ Code should feel boring in a good way.
 
 Preferred stack:
 
-- Python 3.12+
+- Python 3.11+
 - FastAPI
 - Pydantic
 - httpx

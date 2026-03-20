@@ -64,7 +64,7 @@ Internal outbound:
 
 Requirements:
 
-- Python 3.12+
+- Python 3.11+
 
 Create an environment and install dependencies:
 
