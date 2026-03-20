@@ -89,6 +89,7 @@ class TelegramClient:
     ) -> dict[str, Any] | bool:
         bot_token = self._require_bot_token(route=route, operation=method_name)
         target = "telegram"
+        method_path = f"/bot{bot_token}/{method_name}"
         start_time = time.perf_counter()
         self._logger.info(
             "telegram_call_started",
@@ -104,12 +105,28 @@ class TelegramClient:
         )
 
         try:
-            response = await self._http_client.post(
-                f"/bot{bot_token}/{method_name}",
-                json=json_payload,
-                data=form_fields,
-                files=files,
-            )
+            if files is not None:
+                multipart_request = self._http_client.build_request(
+                    "POST",
+                    method_path,
+                    data=form_fields,
+                    files=files,
+                )
+                multipart_content_type = multipart_request.headers.get("content-type")
+                if multipart_content_type is None:
+                    raise RuntimeError("failed to build multipart request")
+                raw_body = await multipart_request.aread()
+                response = await self._http_client.post(
+                    method_path,
+                    content=raw_body,
+                    headers={"content-type": multipart_content_type},
+                )
+            else:
+                response = await self._http_client.post(
+                    method_path,
+                    json=json_payload,
+                    data=form_fields,
+                )
         except httpx.TimeoutException as exc:
             self._logger.error(
                 "telegram_call_completed",
@@ -129,6 +146,24 @@ class TelegramClient:
                 error_type="timeout",
             ) from exc
         except httpx.HTTPError as exc:
+            self._logger.error(
+                "telegram_call_completed",
+                extra=build_log_extra(
+                    direction="telegram_outbound",
+                    route=route,
+                    target=target,
+                    elapsed_ms=round((time.perf_counter() - start_time) * 1000, 2),
+                    status=502,
+                    outcome="network_error",
+                    operation=method_name,
+                    mode=self._outbound_mode,
+                ),
+            )
+            raise TelegramTransportError(
+                description="telegram transport error",
+                error_type="network_error",
+            ) from exc
+        except RuntimeError as exc:
             self._logger.error(
                 "telegram_call_completed",
                 extra=build_log_extra(

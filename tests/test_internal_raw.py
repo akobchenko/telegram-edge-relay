@@ -438,6 +438,58 @@ def test_raw_multipart_parse_failure_returns_json_envelope(
     }
 
 
+def test_raw_multipart_build_failure_returns_json_envelope(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": True, "result": True})
+
+    transport_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://api.telegram.org",
+    )
+    client.app.state.telegram_client = TelegramClient(
+        http_client=transport_client,
+        bot_token="123456:test-token",
+        outbound_mode="mixed",
+    )
+
+    def broken_build_request(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("Attempted to send an sync request with an AsyncClient instance.")
+
+    monkeypatch.setattr(transport_client, "build_request", broken_build_request)
+
+    request = client.build_request(
+        "POST",
+        "/internal/telegram/raw/sendPhoto",
+        data={"chat_id": "1"},
+        files={"photo": ("photo.jpg", b"image-bytes", "image/jpeg")},
+    )
+    body = request.content
+    headers = signed_headers("test-shared-secret", body)
+    request.headers[INTERNAL_TIMESTAMP_HEADER] = headers[INTERNAL_TIMESTAMP_HEADER]
+    request.headers[INTERNAL_SIGNATURE_HEADER] = headers[INTERNAL_SIGNATURE_HEADER]
+
+    response = client.send(request)
+
+    assert response.status_code == 502
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json() == {
+        "ok": False,
+        "error_type": "relay_network_error",
+        "message": "telegram transport error",
+        "status_code": 502,
+        "telegram_status_code": None,
+        "telegram_error_code": None,
+        "telegram_description": None,
+        "telegram_response": None,
+        "telegram_response_text": None,
+        "details": None,
+    }
+    transport_client._transport.close()
+
+
 def test_raw_http_error_preserves_upstream_text(client: TestClient) -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(status_code=500, content=b"upstream unavailable")
