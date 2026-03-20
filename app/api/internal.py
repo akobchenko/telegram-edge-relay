@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable
+import json
 import re
 from typing import Any
 
@@ -219,6 +220,30 @@ async def send_photo(
             ]
         )
 
+    reply_markup_raw = form.get("reply_markup")
+    reply_markup = None
+    if reply_markup_raw not in (None, ""):
+        if not isinstance(reply_markup_raw, str):
+            return build_internal_error_response(
+                error_type="validation_error",
+                message="reply_markup must be valid JSON",
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        try:
+            reply_markup = json.loads(reply_markup_raw)
+        except json.JSONDecodeError:
+            return build_internal_error_response(
+                error_type="validation_error",
+                message="reply_markup must be valid JSON",
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        if not isinstance(reply_markup, dict):
+            return build_internal_error_response(
+                error_type="validation_error",
+                message="reply_markup must be a JSON object",
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
     try:
         payload = TelegramSendPhotoRequest(
             chat_id=form.get("chat_id"),
@@ -229,6 +254,7 @@ async def send_photo(
             message_thread_id=form.get("message_thread_id"),
             reply_to_message_id=form.get("reply_to_message_id"),
             allow_sending_without_reply=form.get("allow_sending_without_reply"),
+            reply_markup=reply_markup,
         )
     except ValidationError as exc:
         raise RequestValidationError(exc.errors()) from exc
