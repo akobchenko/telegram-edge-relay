@@ -74,7 +74,7 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-Create a local env file from [`.env.example`](/Users/antonkobcenko/Documents/projects/telegram-edge-relay/.env.example) and set real values.
+Create a local env file from `.env.example` and set real values.
 
 Run the server:
 
@@ -371,7 +371,7 @@ The relay contract is intentionally narrow. If a bot method is not implemented, 
 
 ## Python Examples
 
-Small backend integration examples live in [`examples/README.md`](/Users/antonkobcenko/Documents/projects/telegram-edge-relay/examples/README.md):
+Small backend integration examples live in `examples/README.md`:
 
-- [`examples/backend_client.py`](/Users/antonkobcenko/Documents/projects/telegram-edge-relay/examples/backend_client.py)
-- [`examples/backend_receiver.py`](/Users/antonkobcenko/Documents/projects/telegram-edge-relay/examples/backend_receiver.py)
+- `examples/backend_client.py`
+- `examples/backend_receiver.py`

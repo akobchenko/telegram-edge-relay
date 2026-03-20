@@ -14,5 +14,5 @@ Before using them in production, add:
 
 Files:
 
-- [`backend_client.py`](/Users/antonkobcenko/Documents/projects/telegram-edge-relay/examples/backend_client.py): signing helper plus `sendMessage` and `sendPhoto` calls to the relay
-- [`backend_receiver.py`](/Users/antonkobcenko/Documents/projects/telegram-edge-relay/examples/backend_receiver.py): small FastAPI endpoint that receives forwarded Telegram updates from the relay
+- `backend_client.py`: signing helper plus `sendMessage` and `sendPhoto` calls to the relay
+- `backend_receiver.py`: small FastAPI endpoint that receives forwarded Telegram updates from the relay
