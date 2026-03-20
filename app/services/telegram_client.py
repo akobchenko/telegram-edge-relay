@@ -93,10 +93,19 @@ class TelegramClient:
                 data=form_fields,
                 files=files,
             )
+            raw_body = multipart_request.read()
             multipart_content_type = multipart_request.headers.get("content-type")
             if multipart_content_type is None:
+                stream = getattr(multipart_request, "stream", None)
+                get_headers = getattr(stream, "get_headers", None)
+                if callable(get_headers):
+                    stream_headers = get_headers()
+                    multipart_content_type = stream_headers.get(
+                        "Content-Type"
+                    ) or stream_headers.get("content-type")
+            if multipart_content_type is None:
                 raise RuntimeError("failed to build multipart request")
-            return multipart_request.read(), multipart_content_type
+            return raw_body, multipart_content_type
         finally:
             sync_client.close()
 
