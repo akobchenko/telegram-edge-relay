@@ -59,6 +59,7 @@ Internal outbound:
 - `POST /internal/telegram/answerCallbackQuery`
 - `POST /internal/telegram/deleteMessage`
 - `POST /internal/telegram/sendChatAction`
+- `POST /internal/telegram/raw/{method}`
 
 ## Quick Start
 
@@ -117,6 +118,7 @@ The service fails fast on missing or invalid required values.
 | `INTERNAL_SHARED_SECRET` | yes | HMAC secret for relay/backend request signing |
 | `SIGNATURE_TTL_SECONDS` | yes | Allowed timestamp skew/window for signed internal requests |
 | `TELEGRAM_TIMEOUT_SECONDS` | yes | Timeout for outbound Telegram requests |
+| `TELEGRAM_OUTBOUND_MODE` | no | Outbound mode: `typed`, `mixed`, or `proxy`; defaults to `mixed` |
 | `TELEGRAM_PHOTO_MAX_BYTES` | no | Optional max upload size for internal `sendPhoto` |
 | `BACKEND_TIMEOUT_SECONDS` | yes | Timeout for forwarding webhook updates to the backend |
 | `DEBUG` | yes | Enables plain-text logs when `true`; keep `false` in production |
@@ -253,10 +255,20 @@ All internal outbound endpoints:
 - return `401` for auth failures
 - return `422` for request validation failures
 
+Outbound modes:
+
+- `typed`: only the explicitly implemented typed endpoints are allowed; raw fallback is rejected
+- `mixed`: default and recommended mode; typed endpoints remain primary, and `/internal/telegram/raw/{method}` is available as a trusted internal escape hatch
+- `proxy`: JSON-based typed endpoints route through the same generic Telegram method helper, while `sendPhoto` remains on the typed multipart path because raw v1 does not support file upload
+
+Typed endpoints remain the preferred interface.
+Raw/proxy mode is intended only for trusted internal/private use.
+
 Normalized internal error categories:
 
 - `validation_error`
 - `auth_error`
+- `operation_not_allowed`
 - `relay_timeout`
 - `relay_network_error`
 - `telegram_http_error`
@@ -379,6 +391,40 @@ Portable backend advice:
 - generate the multipart body in code
 - compute HMAC over the exact serialized body bytes
 - send that body with matching `X-Relay-Timestamp` and `X-Relay-Signature`
+
+Raw fallback/proxy v1 does not support multipart file upload. File uploads must continue using the typed `sendPhoto` endpoint.
+
+### raw fallback example: sendDice
+
+```bash
+BODY='{"chat_id":123456}'
+TIMESTAMP=$(date +%s)
+SIGNATURE=$(printf '%s.%s' "$TIMESTAMP" "$BODY" \
+  | openssl dgst -sha256 -hmac "$INTERNAL_SHARED_SECRET" -hex \
+  | awk '{print "sha256=" $2}')
+
+curl -X POST "${RELAY_BASE_URL}/internal/telegram/raw/sendDice" \
+  -H "Content-Type: application/json" \
+  -H "X-Relay-Timestamp: ${TIMESTAMP}" \
+  -H "X-Relay-Signature: ${SIGNATURE}" \
+  -d "$BODY"
+```
+
+### raw fallback example: getChatMemberCount
+
+```bash
+BODY='{"chat_id":123456}'
+TIMESTAMP=$(date +%s)
+SIGNATURE=$(printf '%s.%s' "$TIMESTAMP" "$BODY" \
+  | openssl dgst -sha256 -hmac "$INTERNAL_SHARED_SECRET" -hex \
+  | awk '{print "sha256=" $2}')
+
+curl -X POST "${RELAY_BASE_URL}/internal/telegram/raw/getChatMemberCount" \
+  -H "Content-Type: application/json" \
+  -H "X-Relay-Timestamp: ${TIMESTAMP}" \
+  -H "X-Relay-Signature: ${SIGNATURE}" \
+  -d "$BODY"
+```
 
 ## Forwarded Webhook Contract
 

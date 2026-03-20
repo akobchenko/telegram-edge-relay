@@ -62,6 +62,7 @@ def install_mock_telegram_client(
     client.app.state.telegram_client = TelegramClient(
         http_client=transport_client,
         bot_token="123456:test-token",
+        outbound_mode="mixed",
     )
     return transport_client
 

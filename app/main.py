@@ -43,6 +43,7 @@ def create_app() -> FastAPI:
             app.state.telegram_client = TelegramClient(
                 http_client=telegram_http_client,
                 bot_token=settings.telegram_bot_token.get_secret_value(),
+                outbound_mode=settings.telegram_outbound_mode,
             )
             app.state.backend_forwarder = BackendForwarder(
                 http_client=backend_http_client,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
@@ -10,7 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from app.config import get_settings
-from app.logging import get_logger
+from app.logging import build_log_extra, get_logger
 from app.models.internal import (
     TelegramAnswerCallbackQueryRequest,
     TelegramDeleteMessageRequest,
@@ -33,6 +34,7 @@ from app.services.telegram_client import (
 
 router = APIRouter(prefix="/internal/telegram", tags=["internal"])
 logger = get_logger("app.internal.telegram")
+_RAW_METHOD_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9]{1,63}$")
 
 
 def build_internal_error_response(
@@ -141,6 +143,26 @@ async def _run_telegram_call(
         },
     )
     return TelegramMethodSuccessResponse(ok=True, result=result)
+
+
+def _raw_method_route(method: str) -> str:
+    return f"/internal/telegram/raw/{method}"
+
+
+def _validate_raw_method_name(method: str) -> str | None:
+    if _RAW_METHOD_PATTERN.fullmatch(method):
+        return None
+    return "telegram method name is invalid"
+
+
+def _require_raw_mode_allowed(mode: str) -> JSONResponse | None:
+    if mode != "typed":
+        return None
+    return build_internal_error_response(
+        error_type="operation_not_allowed",
+        message="raw telegram fallback is disabled in typed mode",
+        status_code=status.HTTP_403_FORBIDDEN,
+    )
 
 
 @router.post(
@@ -333,4 +355,70 @@ async def send_chat_action(
 ) -> TelegramMethodSuccessResponse | JSONResponse:
     return await _run_telegram_call(
         telegram_client.send_chat_action(payload.model_dump(exclude_none=True))
+    )
+
+
+@router.post(
+    "/raw/{method}",
+    response_model=TelegramMethodSuccessResponse,
+    responses={
+        422: {"model": TelegramMethodErrorResponse},
+        401: {"model": TelegramMethodErrorResponse},
+        403: {"model": TelegramMethodErrorResponse},
+        502: {"model": TelegramMethodErrorResponse},
+        503: {"model": TelegramMethodErrorResponse},
+        504: {"model": TelegramMethodErrorResponse},
+    },
+)
+async def call_raw_method(
+    method: str,
+    payload: dict[str, Any],
+    _: None = Depends(require_internal_signature),
+    telegram_client: TelegramClient = Depends(get_telegram_client),
+) -> TelegramMethodSuccessResponse | JSONResponse:
+    route = _raw_method_route(method)
+
+    invalid_method_message = _validate_raw_method_name(method)
+    if invalid_method_message is not None:
+        return build_internal_error_response(
+            error_type="validation_error",
+            message=invalid_method_message,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
+    mode_rejection = _require_raw_mode_allowed(telegram_client.outbound_mode)
+    if mode_rejection is not None:
+        logger.warning(
+            "telegram_raw_method_rejected",
+            extra=build_log_extra(
+                direction="telegram_outbound",
+                route=route,
+                target="telegram",
+                elapsed_ms=0.0,
+                status=403,
+                outcome="operation_not_allowed",
+                operation=method,
+                mode=telegram_client.outbound_mode,
+            ),
+        )
+        return mode_rejection
+
+    logger.info(
+        "telegram_raw_method_requested",
+        extra=build_log_extra(
+            direction="telegram_outbound",
+            route=route,
+            target="telegram",
+            elapsed_ms=0.0,
+            status=None,
+            operation=method,
+            mode=telegram_client.outbound_mode,
+        ),
+    )
+    return await _run_telegram_call(
+        telegram_client.call_raw_method(
+            method_name=method,
+            route=route,
+            payload=payload,
+        )
     )

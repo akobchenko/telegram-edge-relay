@@ -119,6 +119,7 @@ def test_send_message_returns_mocked_telegram_success(client: TestClient) -> Non
     client.app.state.telegram_client = TelegramClient(
         http_client=transport_client,
         bot_token="123456:test-token",
+        outbound_mode="mixed",
     )
 
     body = json.dumps({"chat_id": 1, "text": "hello"}).encode("utf-8")
@@ -156,6 +157,7 @@ def test_send_message_returns_mocked_telegram_api_error(client: TestClient) -> N
     client.app.state.telegram_client = TelegramClient(
         http_client=transport_client,
         bot_token="123456:test-token",
+        outbound_mode="mixed",
     )
 
     body = json.dumps({"chat_id": 1, "text": "hello"}).encode("utf-8")
@@ -199,6 +201,7 @@ def test_send_message_handles_timeout(client: TestClient) -> None:
     client.app.state.telegram_client = TelegramClient(
         http_client=transport_client,
         bot_token="123456:test-token",
+        outbound_mode="mixed",
     )
 
     body = json.dumps({"chat_id": 1, "text": "hello"}).encode("utf-8")

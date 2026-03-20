@@ -4,6 +4,8 @@ import os
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 
+from typing import Literal
+
 from pydantic import (
     AnyHttpUrl,
     BaseModel,
@@ -37,6 +39,10 @@ class Settings(BaseModel):
     internal_shared_secret: SecretStr = Field(alias="INTERNAL_SHARED_SECRET")
     signature_ttl_seconds: int = Field(alias="SIGNATURE_TTL_SECONDS", ge=1, le=3600)
     telegram_timeout_seconds: float = Field(alias="TELEGRAM_TIMEOUT_SECONDS", ge=1.0, le=60.0)
+    telegram_outbound_mode: Literal["typed", "mixed", "proxy"] = Field(
+        default="mixed",
+        alias="TELEGRAM_OUTBOUND_MODE",
+    )
     telegram_photo_max_bytes: int | None = Field(
         default=None,
         alias="TELEGRAM_PHOTO_MAX_BYTES",
@@ -94,6 +100,7 @@ class Settings(BaseModel):
             debug=self.debug,
             signature_ttl_seconds=self.signature_ttl_seconds,
             telegram_timeout_seconds=self.telegram_timeout_seconds,
+            telegram_outbound_mode=self.telegram_outbound_mode,
             telegram_photo_max_bytes=self.telegram_photo_max_bytes,
             backend_timeout_seconds=self.backend_timeout_seconds,
             telegram_bot_token_configured=True,
@@ -110,6 +117,7 @@ class HealthConfigSummary(BaseModel):
     debug: bool
     signature_ttl_seconds: int
     telegram_timeout_seconds: float
+    telegram_outbound_mode: Literal["typed", "mixed", "proxy"]
     telegram_photo_max_bytes: int | None
     backend_timeout_seconds: float
     telegram_bot_token_configured: bool

@@ -46,6 +46,7 @@ def test_health_returns_safe_summary_with_version(client: TestClient) -> None:
             "debug": False,
             "signature_ttl_seconds": 300,
             "telegram_timeout_seconds": 10.0,
+            "telegram_outbound_mode": "mixed",
             "telegram_photo_max_bytes": None,
             "backend_timeout_seconds": 10.0,
             "telegram_bot_token_configured": True,

@@ -110,6 +110,7 @@ class TelegramMethodErrorResponse(BaseModel):
     error_type: Literal[
         "validation_error",
         "auth_error",
+        "operation_not_allowed",
         "relay_timeout",
         "relay_network_error",
         "telegram_http_error",

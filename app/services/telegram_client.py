@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import time
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import httpx
 from fastapi import Request
 
-from app.config import get_settings
 from app.logging import build_log_extra, get_logger
 
 
@@ -32,16 +31,25 @@ class TelegramTransportError(Exception):
     error_type: str
 
 
+TelegramOutboundMode = Literal["typed", "mixed", "proxy"]
+
+
 class TelegramClient:
     def __init__(
         self,
         *,
         http_client: httpx.AsyncClient,
         bot_token: str | None,
+        outbound_mode: TelegramOutboundMode,
     ) -> None:
         self._http_client = http_client
         self._bot_token = bot_token
+        self._outbound_mode = outbound_mode
         self._logger = get_logger("app.telegram.client")
+
+    @property
+    def outbound_mode(self) -> TelegramOutboundMode:
+        return self._outbound_mode
 
     def _require_bot_token(self, *, route: str, operation: str) -> str:
         if self._bot_token:
@@ -84,6 +92,7 @@ class TelegramClient:
                 elapsed_ms=0.0,
                 status=None,
                 operation=method_name,
+                mode=self._outbound_mode,
             ),
         )
 
@@ -105,6 +114,7 @@ class TelegramClient:
                     status=504,
                     outcome="timeout",
                     operation=method_name,
+                    mode=self._outbound_mode,
                 ),
             )
             raise TelegramTransportError(
@@ -122,6 +132,7 @@ class TelegramClient:
                     status=502,
                     outcome="network_error",
                     operation=method_name,
+                    mode=self._outbound_mode,
                 ),
             )
             raise TelegramTransportError(
@@ -142,6 +153,7 @@ class TelegramClient:
                     status=502,
                     outcome="invalid_response",
                     operation=method_name,
+                    mode=self._outbound_mode,
                 ),
             )
             raise TelegramTransportError(
@@ -162,6 +174,7 @@ class TelegramClient:
                         status=response.status_code,
                         outcome="success",
                         operation=method_name,
+                        mode=self._outbound_mode,
                     ),
                 )
                 return result
@@ -175,6 +188,7 @@ class TelegramClient:
                     status=502,
                     outcome="invalid_response",
                     operation=method_name,
+                    mode=self._outbound_mode,
                 ),
             )
             raise TelegramTransportError(
@@ -201,6 +215,7 @@ class TelegramClient:
                     status=response.status_code,
                     outcome="telegram_http_error",
                     operation=method_name,
+                    mode=self._outbound_mode,
                     upstream_status_code=response.status_code,
                     error_code=error_code if isinstance(error_code, int) else None,
                 ),
@@ -231,6 +246,7 @@ class TelegramClient:
                 status=502,
                 outcome="telegram_api_error",
                 operation=method_name,
+                mode=self._outbound_mode,
                 error_code=error_code if isinstance(error_code, int) else None,
             ),
         )
@@ -240,11 +256,24 @@ class TelegramClient:
             response_data=response_data,
         )
 
-    async def send_message(self, payload: dict[str, Any]) -> dict[str, Any] | bool:
+    async def call_raw_method(
+        self,
+        *,
+        method_name: str,
+        route: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | bool:
         return await self._post(
+            method_name=method_name,
+            route=route,
+            json_payload=payload,
+        )
+
+    async def send_message(self, payload: dict[str, Any]) -> dict[str, Any] | bool:
+        return await self.call_raw_method(
             method_name="sendMessage",
             route="/internal/telegram/sendMessage",
-            json_payload=payload,
+            payload=payload,
         )
 
     async def send_photo(
@@ -273,41 +302,41 @@ class TelegramClient:
         )
 
     async def edit_message_text(self, payload: dict[str, Any]) -> dict[str, Any] | bool:
-        return await self._post(
+        return await self.call_raw_method(
             method_name="editMessageText",
             route="/internal/telegram/editMessageText",
-            json_payload=payload,
+            payload=payload,
         )
 
     async def edit_message_caption(self, payload: dict[str, Any]) -> dict[str, Any] | bool:
-        return await self._post(
+        return await self.call_raw_method(
             method_name="editMessageCaption",
             route="/internal/telegram/editMessageCaption",
-            json_payload=payload,
+            payload=payload,
         )
 
     async def answer_callback_query(
         self,
         payload: dict[str, Any],
     ) -> dict[str, Any] | bool:
-        return await self._post(
+        return await self.call_raw_method(
             method_name="answerCallbackQuery",
             route="/internal/telegram/answerCallbackQuery",
-            json_payload=payload,
+            payload=payload,
         )
 
     async def delete_message(self, payload: dict[str, Any]) -> dict[str, Any] | bool:
-        return await self._post(
+        return await self.call_raw_method(
             method_name="deleteMessage",
             route="/internal/telegram/deleteMessage",
-            json_payload=payload,
+            payload=payload,
         )
 
     async def send_chat_action(self, payload: dict[str, Any]) -> dict[str, Any] | bool:
-        return await self._post(
+        return await self.call_raw_method(
             method_name="sendChatAction",
             route="/internal/telegram/sendChatAction",
-            json_payload=payload,
+            payload=payload,
         )
 
 
