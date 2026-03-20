@@ -94,6 +94,10 @@ def test_send_photo_uses_multipart_and_succeeds(client: TestClient) -> None:
         assert request.headers["content-type"].startswith("multipart/form-data")
         assert b'filename="photo.jpg"' in request.content
         assert b'image-bytes' in request.content
+        assert (
+            b'{"inline_keyboard":[[{"text":"Open","callback_data":"open"}]]}'
+            in request.content
+        )
         return httpx.Response(
             status_code=200,
             json={"ok": True, "result": {"message_id": 11}},
@@ -107,7 +111,14 @@ def test_send_photo_uses_multipart_and_succeeds(client: TestClient) -> None:
         client=client,
         secret="test-shared-secret",
         path="/internal/telegram/sendPhoto",
-        data={"chat_id": "1", "caption": "hello"},
+        data={
+            "chat_id": "1",
+            "caption": "hello",
+            "reply_markup": json.dumps(
+                {"inline_keyboard": [[{"text": "Open", "callback_data": "open"}]]},
+                separators=(",", ":"),
+            ),
+        },
         files={"photo": ("photo.jpg", b"image-bytes", "image/jpeg")},
     )
 

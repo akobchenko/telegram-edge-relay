@@ -16,6 +16,7 @@ class TelegramSendMessageRequest(BaseModel):
     message_thread_id: int | None = Field(default=None, ge=1)
     reply_to_message_id: int | None = Field(default=None, ge=1)
     allow_sending_without_reply: bool | None = None
+    reply_markup: dict[str, Any] | None = None
 
 
 class TelegramSendPhotoRequest(BaseModel):
@@ -27,6 +28,7 @@ class TelegramSendPhotoRequest(BaseModel):
     message_thread_id: int | None = Field(default=None, ge=1)
     reply_to_message_id: int | None = Field(default=None, ge=1)
     allow_sending_without_reply: bool | None = None
+    reply_markup: dict[str, Any] | None = None
 
 
 class TelegramEditMessageTextRequest(BaseModel):
@@ -36,6 +38,7 @@ class TelegramEditMessageTextRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4096)
     parse_mode: ParseMode | None = None
     disable_web_page_preview: bool | None = None
+    reply_markup: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def validate_message_target(self) -> "TelegramEditMessageTextRequest":
@@ -54,6 +57,7 @@ class TelegramEditMessageCaptionRequest(BaseModel):
     inline_message_id: str | None = None
     caption: str = Field(min_length=1, max_length=1024)
     parse_mode: ParseMode | None = None
+    reply_markup: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def validate_message_target(self) -> "TelegramEditMessageCaptionRequest":

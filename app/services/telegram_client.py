@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import time
 from typing import Any, Literal, cast
 
@@ -286,7 +287,13 @@ class TelegramClient:
         photo_content_type: str,
     ) -> dict[str, Any] | bool:
         form_payload = {
-            key: str(value).lower() if isinstance(value, bool) else str(value)
+            key: (
+                json.dumps(value, separators=(",", ":"))
+                if isinstance(value, (dict, list))
+                else str(value).lower()
+                if isinstance(value, bool)
+                else str(value)
+            )
             for key, value in payload.items()
         }
         return await self._post(

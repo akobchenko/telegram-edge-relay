@@ -99,6 +99,7 @@ def test_send_message_rejects_invalid_body(client: TestClient) -> None:
 def test_send_message_returns_mocked_telegram_success(client: TestClient) -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path.endswith("/sendMessage")
+        assert request.json()["reply_markup"]["inline_keyboard"][0][0]["text"] == "Open"
         return httpx.Response(
             status_code=200,
             json={
@@ -122,7 +123,15 @@ def test_send_message_returns_mocked_telegram_success(client: TestClient) -> Non
         outbound_mode="mixed",
     )
 
-    body = json.dumps({"chat_id": 1, "text": "hello"}).encode("utf-8")
+    body = json.dumps(
+        {
+            "chat_id": 1,
+            "text": "hello",
+            "reply_markup": {
+                "inline_keyboard": [[{"text": "Open", "callback_data": "open"}]]
+            },
+        }
+    ).encode("utf-8")
     response = client.post(
         "/internal/telegram/sendMessage",
         content=body,
