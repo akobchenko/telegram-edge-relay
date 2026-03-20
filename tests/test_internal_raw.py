@@ -455,10 +455,14 @@ def test_raw_multipart_build_failure_returns_json_envelope(
         outbound_mode="mixed",
     )
 
-    def broken_build_request(*args, **kwargs):  # type: ignore[no-untyped-def]
+    def broken_build_multipart_body(*args, **kwargs):  # type: ignore[no-untyped-def]
         raise RuntimeError("Attempted to send an sync request with an AsyncClient instance.")
 
-    monkeypatch.setattr(transport_client, "build_request", broken_build_request)
+    monkeypatch.setattr(
+        client.app.state.telegram_client,
+        "_build_multipart_body",
+        broken_build_multipart_body,
+    )
 
     request = client.build_request(
         "POST",
@@ -484,7 +488,7 @@ def test_raw_multipart_build_failure_returns_json_envelope(
         "telegram_error_code": None,
         "telegram_description": None,
         "telegram_response": None,
-        "telegram_response_text": None,
+        "telegram_response_text": "Attempted to send an sync request with an AsyncClient instance.",
         "details": None,
     }
     transport_client._transport.close()

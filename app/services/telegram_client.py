@@ -78,6 +78,28 @@ class TelegramClient:
             error_type="misconfigured",
         )
 
+    def _build_multipart_body(
+        self,
+        *,
+        method_path: str,
+        form_fields: TelegramFormFields | None,
+        files: TelegramMultipartFiles,
+    ) -> tuple[bytes, str]:
+        sync_client = httpx.Client(base_url=str(self._http_client.base_url))
+        try:
+            multipart_request = sync_client.build_request(
+                "POST",
+                method_path,
+                data=form_fields,
+                files=files,
+            )
+            multipart_content_type = multipart_request.headers.get("content-type")
+            if multipart_content_type is None:
+                raise RuntimeError("failed to build multipart request")
+            return multipart_request.read(), multipart_content_type
+        finally:
+            sync_client.close()
+
     async def forward_method(
         self,
         *,
@@ -106,16 +128,11 @@ class TelegramClient:
 
         try:
             if files is not None:
-                multipart_request = self._http_client.build_request(
-                    "POST",
-                    method_path,
-                    data=form_fields,
+                raw_body, multipart_content_type = self._build_multipart_body(
+                    method_path=method_path,
+                    form_fields=form_fields,
                     files=files,
                 )
-                multipart_content_type = multipart_request.headers.get("content-type")
-                if multipart_content_type is None:
-                    raise RuntimeError("failed to build multipart request")
-                raw_body = multipart_request.read()
                 response = await self._http_client.post(
                     method_path,
                     content=raw_body,
@@ -180,6 +197,7 @@ class TelegramClient:
             raise TelegramTransportError(
                 description="telegram transport error",
                 error_type="network_error",
+                response_text=str(exc),
             ) from exc
 
         response_text = response.text
