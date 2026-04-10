@@ -54,6 +54,7 @@ Internal outbound:
 
 - `POST /internal/telegram/sendMessage`
 - `POST /internal/telegram/sendPhoto`
+- `POST /internal/telegram/{method}` for canonical JSON Bot API fallback
 - `POST /internal/telegram/editMessageText`
 - `POST /internal/telegram/editMessageCaption`
 - `POST /internal/telegram/editMessageMedia`
@@ -61,6 +62,7 @@ Internal outbound:
 - `POST /internal/telegram/deleteMessage`
 - `POST /internal/telegram/sendChatAction`
 - `POST /internal/telegram/raw/{method}`
+- `GET /internal/telegram/file/{file_path}`
 
 ## Quick Start
 
@@ -283,6 +285,7 @@ Transport semantics:
 - the generic/raw forwarding path is the canonical Telegram transport layer for JSON, form-urlencoded, and multipart requests
 - typed endpoints are thin compatibility and safety wrappers over that same transport
 - when the same Telegram method is available through both typed and raw paths, the relay aims to produce equivalent outbound Telegram requests
+- unknown JSON Bot API methods can use the canonical route shape `POST /internal/telegram/{method}` without requiring `/internal/telegram/raw/{method}`
 
 Typed endpoints remain the preferred interface for steady-state integrations that benefit from early validation.
 Raw/proxy mode is intended only for trusted internal/private use.
@@ -451,6 +454,16 @@ curl -X POST "${RELAY_BASE_URL}/internal/telegram/raw/getChatMemberCount" \
 ### raw fallback multipart note
 
 The raw endpoint also accepts signed `multipart/form-data`, including methods such as `sendDocument` and `editMessageMedia`. As with the typed `sendPhoto` endpoint, the backend must sign the exact serialized multipart body bytes, so this is best implemented in backend code rather than with ad hoc shell `curl -F` commands.
+
+### internal file download
+
+For relay-only media access, the relay also exposes:
+
+```text
+GET /internal/telegram/file/{file_path}
+```
+
+This route uses the same internal HMAC headers. Since it is a `GET`, the signature is computed over the empty request body bytes.
 
 ## Forwarded Webhook Contract
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import time
+from urllib.parse import quote
 import uuid
 from typing import Any, Literal, cast
 
@@ -34,6 +35,13 @@ class TelegramTransportError(Exception):
     description: str
     error_type: str
     response_text: str | None = None
+
+
+@dataclass(frozen=True)
+class TelegramFileDownload:
+    content: bytes
+    content_type: str | None
+    content_length: int | None
 
 
 TelegramOutboundMode = Literal["typed", "mixed", "proxy"]
@@ -363,6 +371,117 @@ class TelegramClient:
             error_code=error_code if isinstance(error_code, int) else None,
             response_data=response_data,
             response_text=response_text,
+        )
+
+    async def download_file(
+        self,
+        *,
+        file_path: str,
+        route: str,
+    ) -> TelegramFileDownload:
+        bot_token = self._require_bot_token(route=route, operation="downloadFile")
+        target = "telegram"
+        encoded_path = quote(file_path, safe="/")
+        download_path = f"/file/bot{bot_token}/{encoded_path}"
+        start_time = time.perf_counter()
+        self._logger.info(
+            "telegram_call_started",
+            extra=build_log_extra(
+                direction="telegram_outbound",
+                route=route,
+                target=target,
+                elapsed_ms=0.0,
+                status=None,
+                operation="downloadFile",
+                mode=self._outbound_mode,
+            ),
+        )
+
+        try:
+            response = await self._http_client.get(download_path)
+        except httpx.TimeoutException as exc:
+            self._logger.error(
+                "telegram_call_completed",
+                extra=build_log_extra(
+                    direction="telegram_outbound",
+                    route=route,
+                    target=target,
+                    elapsed_ms=round((time.perf_counter() - start_time) * 1000, 2),
+                    status=504,
+                    outcome="timeout",
+                    operation="downloadFile",
+                    mode=self._outbound_mode,
+                ),
+            )
+            raise TelegramTransportError(
+                description="telegram request timed out",
+                error_type="timeout",
+            ) from exc
+        except httpx.HTTPError as exc:
+            self._logger.error(
+                "telegram_call_completed",
+                extra=build_log_extra(
+                    direction="telegram_outbound",
+                    route=route,
+                    target=target,
+                    elapsed_ms=round((time.perf_counter() - start_time) * 1000, 2),
+                    status=502,
+                    outcome="network_error",
+                    operation="downloadFile",
+                    mode=self._outbound_mode,
+                ),
+            )
+            raise TelegramTransportError(
+                description="telegram transport error",
+                error_type="network_error",
+            ) from exc
+
+        if not response.is_success:
+            self._logger.warning(
+                "telegram_call_completed",
+                extra=build_log_extra(
+                    direction="telegram_outbound",
+                    route=route,
+                    target=target,
+                    elapsed_ms=round((time.perf_counter() - start_time) * 1000, 2),
+                    status=response.status_code,
+                    outcome="telegram_http_error",
+                    operation="downloadFile",
+                    mode=self._outbound_mode,
+                    upstream_status_code=response.status_code,
+                ),
+            )
+            raise TelegramHttpError(
+                description="telegram file download failed",
+                upstream_status_code=response.status_code,
+                response_text=response.text,
+            )
+
+        content_length: int | None = None
+        raw_content_length = response.headers.get("content-length")
+        if raw_content_length is not None:
+            try:
+                content_length = int(raw_content_length)
+            except ValueError:
+                content_length = None
+
+        self._logger.info(
+            "telegram_call_completed",
+            extra=build_log_extra(
+                direction="telegram_outbound",
+                route=route,
+                target=target,
+                elapsed_ms=round((time.perf_counter() - start_time) * 1000, 2),
+                status=response.status_code,
+                outcome="success",
+                operation="downloadFile",
+                mode=self._outbound_mode,
+            ),
+        )
+        return TelegramFileDownload(
+            content=response.content,
+            content_type=response.headers.get("content-type"),
+            content_length=content_length,
         )
 
 def get_telegram_client(request: Request) -> TelegramClient:

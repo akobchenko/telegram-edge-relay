@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import Request, UploadFile, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
 from app.config import get_settings
@@ -20,6 +20,7 @@ from app.models.internal import (
 from app.services.telegram_client import (
     TelegramApiError,
     TelegramClient,
+    TelegramFileDownload,
     TelegramFormFields,
     TelegramHttpError,
     TelegramMultipartFiles,
@@ -285,6 +286,14 @@ def validate_raw_method_name(method: str) -> str | None:
     return "telegram method name is invalid"
 
 
+def validate_file_path(file_path: str) -> str | None:
+    if not file_path:
+        return "telegram file path is invalid"
+    if file_path.startswith("/") or "\\" in file_path or ".." in file_path:
+        return "telegram file path is invalid"
+    return None
+
+
 def require_raw_mode_allowed(mode: str) -> JSONResponse | None:
     if mode != "typed":
         return None
@@ -292,6 +301,25 @@ def require_raw_mode_allowed(mode: str) -> JSONResponse | None:
         error_type="operation_not_allowed",
         message="raw telegram fallback is disabled in typed mode",
         status_code=status.HTTP_403_FORBIDDEN,
+    )
+
+
+async def run_file_download(
+    download: Awaitable[TelegramFileDownload],
+) -> Response | JSONResponse:
+    try:
+        result = await download
+    except (TelegramApiError, TelegramHttpError, TelegramTransportError) as exc:
+        return _telegram_error_response(exc)
+
+    headers: dict[str, str] = {}
+    if result.content_length is not None:
+        headers["content-length"] = str(result.content_length)
+    return Response(
+        content=result.content,
+        status_code=status.HTTP_200_OK,
+        media_type=result.content_type or "application/octet-stream",
+        headers=headers,
     )
 
 
@@ -445,6 +473,27 @@ async def forward_raw_request(
     )
 
 
+async def forward_file_download(
+    *,
+    file_path: str,
+    telegram_client: TelegramClient,
+) -> Response | JSONResponse:
+    invalid_path_message = validate_file_path(file_path)
+    if invalid_path_message is not None:
+        return build_internal_error_response(
+            error_type="validation_error",
+            message=invalid_path_message,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
+    return await run_file_download(
+        telegram_client.download_file(
+            file_path=file_path,
+            route="/internal/telegram/file/{file_path}",
+        )
+    )
+
+
 async def forward_send_photo(
     *,
     request: Request,
@@ -546,6 +595,7 @@ __all__ = [
     "build_internal_error_response",
     "build_relay_local_error_response",
     "build_multipart_forward_payload",
+    "forward_file_download",
     "forward_raw_request",
     "forward_send_photo",
     "forward_typed_json_method",
@@ -553,6 +603,8 @@ __all__ = [
     "parse_form_data",
     "raw_method_route",
     "require_raw_mode_allowed",
+    "run_file_download",
     "run_telegram_call",
+    "validate_file_path",
     "validate_raw_method_name",
 ]
