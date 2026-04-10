@@ -286,6 +286,7 @@ async def edit_message_media(
 
 @router.get(
     "/file/{file_path:path}",
+    response_model=None,
     responses={
         401: {"model": TelegramMethodErrorResponse},
         422: {"model": TelegramMethodErrorResponse},
@@ -299,7 +300,7 @@ async def download_file(
     file_path: str,
     _: None = Depends(require_internal_signature),
     telegram_client: TelegramClient = Depends(get_telegram_client),
-) -> Response | JSONResponse:
+) -> Response:
     return await forward_file_download(
         file_path=file_path,
         telegram_client=telegram_client,
